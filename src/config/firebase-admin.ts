@@ -17,8 +17,15 @@ try {
       credential: cert(serviceAccount)
     });
     console.log('Firebase Admin initialized successfully from JSON file');
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    const decodedKey = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8');
+    const serviceAccount = JSON.parse(decodedKey);
+    initializeApp({
+      credential: cert(serviceAccount)
+    });
+    console.log('Firebase Admin initialized successfully from Base64 ENV');
   } else {
-    console.warn('firebase-service-account.json not found. Firebase Admin not initialized.');
+    console.warn('Firebase credentials not found (neither JSON file nor Base64 env var). Firebase Admin not initialized.');
   }
 } catch (error) {
   console.error('Failed to initialize Firebase Admin:', error);
