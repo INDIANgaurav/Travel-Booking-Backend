@@ -1,7 +1,9 @@
 import express from 'express';
 import dotenv from 'dotenv';
+dotenv.config();
 import cors from 'cors';
 import connectDB from './config/db';
+import './config/firebase-admin';
 
 import authRoutes from './modules/auth/auth.routes';
 import adminRoutes from './modules/users/admin.routes';
@@ -12,8 +14,10 @@ import walletRoutes from './modules/wallet/wallet.routes';
 import searchRoutes from './modules/searches/search.routes';
 import bookingRoutes from './modules/bookings/booking.routes';
 import cmsRoutes from './modules/cms/cms.routes';
+import hotelRoutes from './modules/hotels/hotel.routes';
 
-dotenv.config();
+
+
 
 connectDB();
 
@@ -38,6 +42,13 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/searches', searchRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/cms', cmsRoutes);
+app.use('/api/hotels', hotelRoutes);
+
+// Global Error Handler to catch [object Object] issues
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Global Error:", err);
+  res.status(500).json({ message: err.message || "Internal Server Error", error: err });
+});
 
 const PORT = process.env.PORT || 5000;
 

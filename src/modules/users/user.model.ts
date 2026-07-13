@@ -15,11 +15,11 @@ const userSchema = new Schema<IUser>(
     },
     phone: {
       type: String,
-      required: true,
+      // optional for OAuth
     },
     password: {
       type: String,
-      required: true,
+      // optional for OAuth
     },
     role: {
       type: String,
@@ -81,7 +81,7 @@ const userSchema = new Schema<IUser>(
 );
 
 userSchema.pre('save', async function () {
-  if (!this.isModified('password')) {
+  if (!this.isModified('password') || !this.password) {
     return;
   }
   const salt = await bcrypt.genSalt(10);

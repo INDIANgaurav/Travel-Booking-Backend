@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import User from '../users/user.model';
+import { getAuth } from 'firebase-admin/auth';
+import { getApps } from 'firebase-admin/app';
 
 const generateToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
@@ -78,6 +80,68 @@ export const loginUser = async (req: Request, res: Response) => {
     }
   } catch (error: any) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+export const googleAuth = async (req: Request, res: Response) => {
+  try {
+    const { token, role } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ message: 'Firebase token is required' });
+    }
+
+    if (!getApps().length) {
+       return res.status(500).json({ message: 'Firebase Admin not initialized on the server.' });
+    }
+
+    // Verify the Firebase ID token
+    const decodedToken = await getAuth().verifyIdToken(token);
+    const { email, name, picture } = decodedToken;
+
+    if (!email) {
+      return res.status(400).json({ message: 'No email found in Google account' });
+    }
+
+    // Check if user already exists
+    let user = await User.findOne({ email });
+
+    if (user) {
+      if (role === 'AGENT' && user.role !== 'AGENT') {
+        return res.status(400).json({ message: 'This Google account is already registered as a standard User. Please use a different email to register as an Agent.' });
+      }
+    } else {
+      // Create a new user if they don't exist
+      let isApproved = true;
+      if (role === 'AGENT') {
+        isApproved = false;
+      }
+
+      user = await User.create({
+        name: name || 'User',
+        email,
+        role: role || 'USER',
+        avatar: picture || '',
+        isEmailVerified: true,
+        isApproved
+      });
+    }
+
+    // Generate JWT
+    res.status(200).json({
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      department: user.department,
+      isApproved: user.isApproved,
+      avatar: user.avatar,
+      token: generateToken(user.id),
+    });
+
+  } catch (error: any) {
+    console.error('Google Auth Error:', error);
+    res.status(500).json({ message: 'Authentication failed. Please try again.' });
   }
 };
 

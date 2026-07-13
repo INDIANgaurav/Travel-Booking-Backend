@@ -2,9 +2,7 @@ import { Request, Response } from 'express';
 import Offer from './offer.model';
 import Destination from '../tours/destination.model';
 
-// @desc    Get popular destinations for CMS
-// @route   GET /api/cms/destinations
-// @access  Public
+ 
 export const getCMSDestinations = async (req: Request, res: Response) => {
   try {
     const destinations = await Destination.find({ isActive: true }).limit(6);
@@ -22,9 +20,7 @@ export const getCMSDestinations = async (req: Request, res: Response) => {
   }
 };
 
-// @desc    Get active offers for CMS
-// @route   GET /api/cms/offers
-// @access  Public
+ 
 export const getOffers = async (req: Request, res: Response) => {
   try {
     const offers = await Offer.find({ isActive: true }).limit(5);
