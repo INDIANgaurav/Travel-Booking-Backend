@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { registerHotel, searchHotels, getMyProperties, updateMyProperty, deleteMyProperty, getAllProperties, updatePropertyStatus, deletePropertyAdmin } from './hotel.controller';
+import { registerHotel, searchHotels, getMyProperties, updateMyProperty, deleteMyProperty, getAllProperties, updatePropertyStatus, deletePropertyAdmin, getUniqueCities } from './hotel.controller';
 import { protect, isAdminOrSubAdmin } from '../../middleware/auth.middleware';
 import { upload } from '../../config/cloudinary';
 
@@ -7,6 +7,9 @@ const router = Router();
 
 // Public route to search hotels
 router.get('/search', searchHotels);
+
+// Public route to get unique cities with approved hotels
+router.get('/cities', getUniqueCities);
 
 // Protected routes for User's own properties
 router.get('/my-properties', protect, getMyProperties);

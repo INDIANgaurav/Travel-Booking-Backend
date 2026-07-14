@@ -111,6 +111,42 @@ export const createSubAdmin = async (req: Request, res: Response) => {
   }
 };
 
+// @desc    Create a new Agent
+// @route   POST /api/admin/agents
+// @access  Private (Super Admin)
+export const createAgent = async (req: Request, res: Response) => {
+  try {
+    const { name, email, phone, password, companyName } = req.body;
+
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    const agent = await User.create({
+      name,
+      email,
+      phone,
+      password,
+      role: 'AGENT',
+      companyName,
+      isApproved: true,
+      isEmailVerified: true,
+      isPhoneVerified: true,
+    });
+
+    res.status(201).json({
+      _id: agent.id,
+      name: agent.name,
+      email: agent.email,
+      role: agent.role,
+      companyName: agent.companyName,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const deleteUser = async (req: Request, res: Response) => {
   try {
     const user = await User.findById(req.params.id);

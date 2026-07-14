@@ -185,3 +185,40 @@ export const deletePropertyAdmin = async (req: Request, res: Response) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+// 9. Get Unique Cities for CityPicker
+export const getUniqueCities = async (req: Request, res: Response) => {
+  try {
+    const cities = await Hotel.aggregate([
+      { $match: { status: 'APPROVED' } },
+      { 
+        $group: { 
+          _id: { city: "$city", state: "$state" } 
+        } 
+      },
+      {
+        $project: {
+          _id: 0,
+          city: "$_id.city",
+          state: "$_id.state"
+        }
+      }
+    ]);
+    
+    // Filter out any entries where city is undefined or empty
+    const validCities = cities.filter(c => c.city && c.city.trim() !== '');
+
+    // Map to CityPicker expected format (code, name, airport, country)
+    const formattedCities = validCities.map(c => ({
+      code: c.city.substring(0, 3).toUpperCase(),
+      name: c.city,
+      airport: `${c.city} Airport`,
+      country: 'India'
+    }));
+    
+    return res.status(200).json(formattedCities);
+  } catch (error) {
+    console.error("Error fetching unique cities:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};

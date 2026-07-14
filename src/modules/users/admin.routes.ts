@@ -1,5 +1,5 @@
 import express from 'express';
-import { getUsers, approveAgent, updateUserRole, createSubAdmin, getAllBookings, deleteUser } from './admin.controller';
+import { getUsers, approveAgent, updateUserRole, createSubAdmin, createAgent, getAllBookings, deleteUser } from './admin.controller';
 import { protect } from '../../middleware/auth.middleware';
 import { authorizeRoles, authorizeDepartments } from '../../middleware/rbac.middleware';
 
@@ -20,5 +20,6 @@ router.put(
 router.put('/users/:id', authorizeRoles('SUPER_ADMIN'), updateUserRole);
 router.delete('/users/:id', authorizeRoles('SUPER_ADMIN'), deleteUser);
 router.post('/subadmins', authorizeRoles('SUPER_ADMIN'), createSubAdmin);
+router.post('/agents', authorizeRoles('SUPER_ADMIN'), createAgent);
 
 export default router;
