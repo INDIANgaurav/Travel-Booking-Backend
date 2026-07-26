@@ -23,9 +23,9 @@ export const registerUser = async (req: Request, res: Response) => {
       return res.status(403).json({ message: 'Cannot register admin roles publicly' });
     }
 
-    let isApproved = true;
-    if (role === 'AGENT') {
-      isApproved = false;
+    let agentStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE' | undefined = undefined;
+    if (role === 'TRAVEL_AGENT') {
+      agentStatus = 'PENDING';
     }
 
     const user = await User.create({
@@ -35,8 +35,8 @@ export const registerUser = async (req: Request, res: Response) => {
       password,
       role: role || 'USER',
       department: role === 'SUB_ADMIN' ? department : null,
-      companyName: role === 'AGENT' ? companyName : null,
-      isApproved
+      companyName: role === 'TRAVEL_AGENT' ? companyName : null,
+      agentStatus
     });
 
     if (user) {
@@ -46,12 +46,75 @@ export const registerUser = async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         department: user.department,
-        isApproved: user.isApproved,
+        agentStatus: user.agentStatus,
         token: generateToken(user.id),
       });
     } else {
       res.status(400).json({ message: 'Invalid user data' });
     }
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const registerAgent = async (req: Request, res: Response) => {
+  try {
+    const {
+      companyName,
+      firstName,
+      lastName,
+      phone,
+      email,
+      password,
+      officeAddress,
+      state,
+      city,
+      pincode,
+      panNumber,
+      panCardImage,
+      idProofType,
+      idProofImage,
+      gstn,
+      gstImage,
+      remarks,
+    } = req.body;
+
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({ message: 'An account with this email already exists' });
+    }
+
+    const name = `${firstName || ''} ${lastName || ''}`.trim() || companyName || 'Agent';
+
+    const user = await User.create({
+      name,
+      firstName,
+      lastName,
+      email,
+      phone,
+      password: password || 'Agent@123',
+      role: 'SUPPLIER_AGENT',
+      companyName,
+      officeAddress,
+      state,
+      city,
+      pincode,
+      panNumber,
+      panCardImage,
+      idProofType,
+      idProofImage,
+      gstn,
+      gstImage,
+      remarks,
+      agentStatus: 'PENDING_APPROVAL',
+      isApproved: false,
+    });
+
+    res.status(201).json({
+      message: 'Agent registration submitted successfully. Please wait for Admin approval.',
+      agentId: user._id,
+      agentStatus: user.agentStatus,
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -63,8 +126,15 @@ export const loginUser = async (req: Request, res: Response) => {
     const user = await User.findOne({ email });
 
     if (user && (await user.matchPassword(password))) {
-      if (user.role === 'AGENT' && !user.isApproved) {
-        return res.status(401).json({ message: 'Agent account pending approval' });
+      if (!user.isActive) {
+        return res.status(401).json({ message: 'Account has been deactivated', status: 'INACTIVE' });
+      }
+
+      if ((user.role === 'TRAVEL_AGENT' || user.role === 'SUPPLIER_AGENT') && user.agentStatus !== 'APPROVED') {
+        return res.status(401).json({ 
+          message: 'Your registration is pending approval from Admin.', 
+          status: user.agentStatus || 'PENDING_APPROVAL' 
+        });
       }
 
       res.json({
@@ -107,14 +177,14 @@ export const googleAuth = async (req: Request, res: Response) => {
     let user = await User.findOne({ email });
 
     if (user) {
-      if (role === 'AGENT' && user.role !== 'AGENT') {
+      if (role === 'TRAVEL_AGENT' && user.role !== 'TRAVEL_AGENT') {
         return res.status(400).json({ message: 'This Google account is already registered as a standard User. Please use a different email to register as an Agent.' });
       }
     } else {
       // Create a new user if they don't exist
-      let isApproved = true;
-      if (role === 'AGENT') {
-        isApproved = false;
+      let agentStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE' | undefined = undefined;
+      if (role === 'TRAVEL_AGENT') {
+        agentStatus = 'PENDING';
       }
 
       user = await User.create({
@@ -123,8 +193,16 @@ export const googleAuth = async (req: Request, res: Response) => {
         role: role || 'USER',
         avatar: picture || '',
         isEmailVerified: true,
-        isApproved
+        agentStatus
       });
+    }
+
+    if (!user.isActive) {
+      return res.status(401).json({ message: 'Account has been deactivated', status: 'INACTIVE' });
+    }
+
+    if (user.role === 'TRAVEL_AGENT' && user.agentStatus !== 'APPROVED') {
+      return res.status(401).json({ message: 'Agent account pending approval', status: 'PENDING' });
     }
 
     // Generate JWT
@@ -134,7 +212,7 @@ export const googleAuth = async (req: Request, res: Response) => {
       email: user.email,
       role: user.role,
       department: user.department,
-      isApproved: user.isApproved,
+      agentStatus: user.agentStatus,
       avatar: user.avatar,
       token: generateToken(user.id),
     });

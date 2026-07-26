@@ -23,7 +23,7 @@ const userSchema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ['SUPER_ADMIN', 'SUB_ADMIN', 'AGENT', 'USER'],
+      enum: ['SUPER_ADMIN', 'SUB_ADMIN', 'TRAVEL_AGENT', 'SUPPLIER_AGENT', 'USER'],
       default: 'USER',
     },
     department: {
@@ -33,6 +33,14 @@ const userSchema = new Schema<IUser>(
     },
     companyName: {
       type: String,
+    },
+    companyRole: { type: String },
+    employeeSize: { type: String },
+    gstn: { type: String },
+    agentStatus: {
+      type: String,
+      enum: ['PENDING', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'INCOMPLETE'],
+      default: 'INCOMPLETE'
     },
     avatar: {
       type: String,
@@ -47,9 +55,22 @@ const userSchema = new Schema<IUser>(
     passportExpiry: { type: Date },
     issuingCountry: { type: String },
     panNumber: { type: String },
+    officeAddress: { type: String },
+    state: { type: String },
+    city: { type: String },
+    pincode: { type: String },
+    panCardImage: { type: String },
+    idProofType: { type: String },
+    idProofImage: { type: String },
+    gstImage: { type: String },
+    remarks: { type: String },
     isEmailVerified: {
       type: Boolean,
       default: false,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
     },
     isPhoneVerified: {
       type: Boolean,

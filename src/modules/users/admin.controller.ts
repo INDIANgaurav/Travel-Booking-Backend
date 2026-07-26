@@ -31,28 +31,30 @@ export const getAllBookings = async (req: Request, res: Response) => {
 export const approveAgent = async (req: Request, res: Response) => {
   try {
     const agentId = req.params.id;
+    const { status } = req.body; // 'APPROVED' | 'REJECTED'
     const agent = await User.findById(agentId);
 
-    if (!agent || agent.role !== 'AGENT') {
+    if (!agent || agent.role !== 'TRAVEL_AGENT') {
       return res.status(404).json({ message: 'Agent not found' });
     }
 
-    if (agent.isApproved) {
-      return res.status(400).json({ message: 'Agent is already approved' });
+    if (agent.agentStatus === status) {
+      return res.status(400).json({ message: `Agent is already ${status}` });
     }
 
-    agent.isApproved = true;
+    agent.agentStatus = status;
+    agent.isApproved = status === 'APPROVED';
     await agent.save();
 
-    res.json({ message: 'Agent approved successfully', agent });
+    res.json({ message: `Agent ${status.toLowerCase()} successfully`, agent });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-export const updateUserRole = async (req: Request, res: Response) => {
+export const updateUser = async (req: Request, res: Response) => {
   try {
-    const { role, department } = req.body;
+    const { role, department, name, phone, companyName, isActive, agentStatus } = req.body;
     const user = await User.findById(req.params.id);
 
     if (!user) {
@@ -60,7 +62,12 @@ export const updateUserRole = async (req: Request, res: Response) => {
     }
 
     user.role = role || user.role;
-    user.department = role === 'SUB_ADMIN' ? (department || user.department) : null;
+    user.department = role === 'SUB_ADMIN' ? (department !== undefined ? department : user.department) : null;
+    if (name) user.name = name;
+    if (phone !== undefined) user.phone = phone;
+    if (companyName !== undefined) user.companyName = companyName;
+    if (isActive !== undefined) user.isActive = isActive;
+    if (agentStatus !== undefined) user.agentStatus = agentStatus;
 
     await user.save();
 
@@ -68,7 +75,9 @@ export const updateUserRole = async (req: Request, res: Response) => {
       _id: user._id,
       name: user.name,
       role: user.role,
-      department: user.department
+      department: user.department,
+      isActive: user.isActive,
+      agentStatus: user.agentStatus
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -128,7 +137,7 @@ export const createAgent = async (req: Request, res: Response) => {
       email,
       phone,
       password,
-      role: 'AGENT',
+      role: 'TRAVEL_AGENT',
       companyName,
       isApproved: true,
       isEmailVerified: true,

@@ -4,6 +4,8 @@ import Booking from './booking.model';
 import Refund from './refund.model';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import { bookFlight } from '../flights/nexusdmc.service';
+import SeriesFare from '../seriesFare/seriesFare.model';
 
 export const getMyBookings = async (req: AuthRequest, res: Response) => {
   try {
@@ -17,7 +19,7 @@ export const getMyBookings = async (req: AuthRequest, res: Response) => {
 
 export const createFlightBooking = async (req: AuthRequest, res: Response) => {
   try {
-    const { totalAmount, details, date } = req.body;
+    const { totalAmount, details, date, bookingMode = 'PERSONAL' } = req.body;
 
     const razorpay = new Razorpay({
       key_id: process.env.RAZORPAY_KEY_ID || '',
@@ -36,8 +38,9 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
     // 2. Create Booking in DB (Status: PENDING)
     const newBooking = new Booking({
       user: req.user._id,
-      bookingId: `MMT-FL-${Math.floor(Math.random() * 1000000)}`,
+      bookingId: `BKG-FL-${Math.floor(Math.random() * 1000000)}`,
       type: 'FLIGHT',
+      bookingMode,
       status: 'PENDING',
       totalAmount,
       date,
@@ -62,7 +65,7 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
 
 export const createHotelBooking = async (req: AuthRequest, res: Response) => {
   try {
-    const { totalAmount, details, date } = req.body;
+    const { totalAmount, details, date, bookingMode = 'PERSONAL' } = req.body;
 
     const razorpay = new Razorpay({
       key_id: process.env.RAZORPAY_KEY_ID || '',
@@ -81,6 +84,7 @@ export const createHotelBooking = async (req: AuthRequest, res: Response) => {
       user: req.user._id,
       bookingId: `HTL-${Math.floor(Math.random() * 1000000)}`,
       type: 'HOTEL',
+      bookingMode,
       status: 'PENDING',
       totalAmount,
       date,
@@ -124,6 +128,70 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
         return res.status(404).json({ message: 'Booking not found for this order' });
       }
 
+      // If it's a flight, call NexusDMC Book API
+      const details = booking.details as any;
+      if (booking.type === 'FLIGHT' && details && details.nexus_query) {
+        try {
+          const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
+          
+          // Map passengers to NexusDMC expected format
+          const paxes = (passengers || []).map((p: any) => ({
+            title: p.gender === 'Male' ? 'Mr' : (p.type === 'Child' || p.type === 'Infant' ? 'Miss' : 'Ms'),
+            first_name: p.name.split(' ')[0] || 'Unknown',
+            last_name: p.name.split(' ').slice(1).join(' ') || 'User',
+            dob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : '1990-01-01',
+            passport_num: p.passportNum || null,
+            passport_expiry_date: p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0] : null,
+            nationality: p.nationality || 'IN'
+          }));
+
+          const client_details = {
+            email: contactDetails?.email || '',
+            phone: contactDetails?.phone || ''
+          };
+
+          const agent_reference = `TB-${booking.bookingId}`;
+
+          const bookResult = await bookFlight(nexus_query, flight_keys, total_price, currency, paxes, client_details, agent_reference);
+          
+          if (bookResult && bookResult.success) {
+            // Update booking with PNR from NexusDMC
+            details.pnr = bookResult.response_ref; // Using response_ref as PNR for now
+            details.nexus_response = bookResult;
+            booking.details = details;
+            booking.markModified('details');
+          }
+        } catch (nexusError) {
+          console.error('NexusDMC Booking failed after payment:', nexusError);
+          // We still confirm the payment but might need manual intervention for the ticket
+        }
+      } else if (booking.type === 'FLIGHT' && details && details.flight_keys && details.flight_keys.length > 0) {
+        try {
+          const sfId = details.flight_keys[0];
+          const passengers = details.passengers || [];
+          
+          let seatCount = 0;
+          if (passengers.length > 0) {
+             seatCount = passengers.filter((p: any) => p.type !== 'Infant' || p.needsSeat).length;
+          } else if (details.seats && Array.isArray(details.seats)) {
+             seatCount = details.seats.length;
+          }
+          if (seatCount === 0) seatCount = 1;
+
+          const sfIdClean = sfId.replace('SF_', '');
+          const seriesFare = await SeriesFare.findById(sfIdClean);
+          if (seriesFare) {
+             seriesFare.availableSeats = Math.max(0, seriesFare.availableSeats - seatCount);
+             if (seriesFare.availableSeats === 0) {
+                 seriesFare.status = 'SoldOut';
+             }
+             await seriesFare.save();
+          }
+        } catch (sfError) {
+          console.error('Failed to decrement SeriesFare seats:', sfError);
+        }
+      }
+
       booking.status = 'CONFIRMED';
       booking.razorpayPaymentId = razorpay_payment_id;
       booking.razorpaySignature = razorpay_signature;
@@ -147,8 +215,9 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // Allow if user is admin OR if user owns the booking
-    if (req.user.role !== 'SUPER_ADMIN' && booking.user._id.toString() !== req.user._id.toString()) {
+    // Allow if user is admin, sub_admin, supplier_agent OR if user owns the booking
+    const allowedRoles = ['SUPER_ADMIN', 'SUB_ADMIN', 'SUPPLIER_AGENT'];
+    if (!allowedRoles.includes(req.user.role) && booking.user._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to view this booking' });
     }
 

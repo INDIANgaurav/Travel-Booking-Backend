@@ -67,6 +67,11 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
         passportExpiry: updatedUser.passportExpiry,
         issuingCountry: updatedUser.issuingCountry,
         panNumber: updatedUser.panNumber,
+        agentStatus: updatedUser.agentStatus,
+        companyName: updatedUser.companyName,
+        companyRole: updatedUser.companyRole,
+        employeeSize: updatedUser.employeeSize,
+        gstn: updatedUser.gstn,
       });
     } else {
       res.status(404).json({ message: 'User not found' });
@@ -147,6 +152,38 @@ export const addSavedTraveller = async (req: AuthRequest, res: Response) => {
 
     const updatedUser = await user.save();
     res.status(201).json(updatedUser.savedTravellers);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Submit Agent Onboarding Details
+// @route   PUT /api/users/agent/onboarding
+// @access  Private (Agent only)
+export const submitAgentOnboarding = async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.role !== 'TRAVEL_AGENT') {
+      return res.status(403).json({ message: 'Only Travel Agents can perform this action' });
+    }
+
+    const { companyName, companyRole, employeeSize, gstn, name, phone } = req.body;
+
+    user.companyName = companyName || user.companyName;
+    user.companyRole = companyRole || user.companyRole;
+    user.employeeSize = employeeSize || user.employeeSize;
+    user.gstn = gstn || user.gstn;
+    if (name) user.name = name;
+    if (phone) user.phone = phone;
+
+    user.agentStatus = 'PENDING';
+    await user.save();
+
+    res.json({ message: 'Onboarding details submitted. Pending admin approval.', user });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

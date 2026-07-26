@@ -1,6 +1,6 @@
 import { Document } from 'mongoose';
 
-export type Role = 'SUPER_ADMIN' | 'SUB_ADMIN' | 'AGENT' | 'USER';
+export type Role = 'SUPER_ADMIN' | 'SUB_ADMIN' | 'TRAVEL_AGENT' | 'SUPPLIER_AGENT' | 'USER';
 export type Department = 'Sales' | 'Operations' | 'Customer Support' | 'Accounts' | null;
 
 export interface IUser extends Document {
@@ -11,6 +11,10 @@ export interface IUser extends Document {
   role: Role;
   department?: Department;
   companyName?: string | null;
+  companyRole?: string;
+  employeeSize?: string;
+  gstn?: string;
+  agentStatus?: 'PENDING' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE';
   avatar?: string;
   firstName?: string;
   lastName?: string;
@@ -21,8 +25,18 @@ export interface IUser extends Document {
   passportExpiry?: Date;
   issuingCountry?: string;
   panNumber?: string;
-  isEmailVerified: boolean;
-  isPhoneVerified: boolean;
+  officeAddress?: string;
+  state?: string;
+  city?: string;
+  pincode?: string;
+  panCardImage?: string;
+  idProofType?: string;
+  idProofImage?: string;
+  gstImage?: string;
+  remarks?: string;
+  isEmailVerified?: boolean;
+  isActive: boolean;
+  isPhoneVerified?: boolean;
   savedTravellers: {
     firstName: string;
     lastName: string;

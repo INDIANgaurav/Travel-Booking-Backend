@@ -1,11 +1,13 @@
 import express from 'express';
-import { getRecentSearches, saveRecentSearch, searchFlights, searchHotels, searchBuses } from './search.controller';
+import { getRecentSearches, saveRecentSearch, searchFlights, searchHotels, searchBuses, checkFlightAvailability, getCalendarPrices } from './search.controller';
 import { protect } from '../../middleware/auth.middleware';
 
 const router = express.Router();
 
 // Public Inventory Search Routes
 router.get('/flights', searchFlights);
+router.get('/calendar-prices', getCalendarPrices);
+router.post('/flights/check', checkFlightAvailability);
 router.get('/hotels', searchHotels);
 router.get('/buses', searchBuses);
 

@@ -7,6 +7,7 @@ export interface IBooking extends Document {
   status: 'CONFIRMED' | 'PENDING' | 'CANCELLED';
   totalAmount: number;
   date: string;
+  bookingMode: 'PERSONAL' | 'MYBIZ';
   
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
@@ -28,6 +29,8 @@ export interface IBooking extends Document {
     seats?: string[];
     flightId?: mongoose.Types.ObjectId;
     pnr?: string;
+    flight_keys?: string[];
+    nexus_query?: any;
     
     // Hotel specific details
     hotelId?: string;
@@ -47,6 +50,7 @@ const bookingSchema = new Schema<IBooking>(
     bookingId: { type: String, required: true, unique: true },
     type: { type: String, enum: ['FLIGHT', 'HOTEL', 'PACKAGE', 'BUS'], required: true },
     status: { type: String, enum: ['CONFIRMED', 'PENDING', 'CANCELLED'], default: 'PENDING' },
+    bookingMode: { type: String, enum: ['PERSONAL', 'MYBIZ'], default: 'PERSONAL' },
     totalAmount: { type: Number, required: true },
     date: { type: String, required: true },
     
@@ -67,12 +71,14 @@ const bookingSchema = new Schema<IBooking>(
       passengers: [{ 
         name: String, 
         gender: String, 
-        passengerType: String 
+        type: { type: String }
       }],
       contactDetails: { email: String, phone: String, countryCode: String },
       seats: [String],
       flightId: { type: Schema.Types.ObjectId, ref: 'Flight' },
       pnr: { type: String },
+      flight_keys: [String],
+      nexus_query: Schema.Types.Mixed,
       
       // Hotel Specific
       hotelId: String,
