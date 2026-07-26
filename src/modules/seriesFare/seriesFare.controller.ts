@@ -110,21 +110,53 @@ export const deleteSeriesFare = async (req: AuthRequest, res: Response) => {
 
 export const getSupplierSummary = async (req: AuthRequest, res: Response) => {
   try {
-    const faresCount = await SeriesFare.countDocuments({ status: 'Active' });
-    const totalSeats = await SeriesFare.aggregate([
-      { $match: { status: 'Active' } },
-      { $group: { _id: null, total: { $sum: '$totalSeats' }, available: { $sum: '$availableSeats' } } }
-    ]);
+    const supplierId = req.user?._id;
+    
+    const faresCount = await SeriesFare.countDocuments({ supplierId, status: 'Active' });
+    
+    const supplierFares = await SeriesFare.find({ supplierId }).select('_id').lean();
+    if (!supplierFares.length) {
+      return res.json({
+        activeFaresCount: 0,
+        bookingCount: 0,
+        bookingValue: 0,
+        cancellationCount: 0,
+        cancellationValue: 0
+      });
+    }
 
-    const stats = totalSeats[0] || { total: 0, available: 0 };
-    const bookedSeats = stats.total - stats.available;
+    const fareIds = supplierFares.map(f => f._id.toString());
+    const Booking = require('../bookings/booking.model').default;
+
+    const bookings = await Booking.find({
+      type: 'FLIGHT',
+      $or: [
+        { 'details.flight_keys': { $in: fareIds.map(id => `SF_${id}`) } },
+        { 'details.flight_keys': { $in: fareIds } }
+      ]
+    }).lean();
+
+    let bookingCount = 0;
+    let bookingValue = 0;
+    let cancellationCount = 0;
+    let cancellationValue = 0;
+
+    bookings.forEach((b: any) => {
+      if (b.status === 'CANCELLED') {
+        cancellationCount += 1;
+        cancellationValue += (b.totalAmount || 0);
+      } else {
+        bookingCount += 1;
+        bookingValue += (b.totalAmount || 0);
+      }
+    });
 
     res.json({
       activeFaresCount: faresCount,
-      bookingCount: Math.max(bookedSeats, 3),
-      bookingValue: Math.max(bookedSeats * 6200, 18608),
-      cancellationCount: 0,
-      cancellationValue: 0
+      bookingCount,
+      bookingValue,
+      cancellationCount,
+      cancellationValue
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
