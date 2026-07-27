@@ -50,6 +50,8 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
 
     await newBooking.save();
 
+    console.log("New Flight Booking created! Reference ID:", newBooking.bookingId);
+
     res.status(201).json({
       booking: newBooking,
       orderId: order.id,
@@ -94,6 +96,8 @@ export const createHotelBooking = async (req: AuthRequest, res: Response) => {
 
     await newBooking.save();
 
+    console.log("New Hotel Booking created! Reference ID:", newBooking.bookingId);
+
     res.status(201).json({
       booking: newBooking,
       orderId: order.id,
@@ -130,13 +134,14 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
 
       // If it's a flight, call NexusDMC Book API
       const details = booking.details as any;
+      let apiBookingFailed = false;
       if (booking.type === 'FLIGHT' && details && details.nexus_query) {
         try {
           const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
           
           // Map passengers to NexusDMC expected format
           const paxes = (passengers || []).map((p: any) => ({
-            title: p.gender === 'Male' ? 'Mr' : (p.type === 'Child' || p.type === 'Infant' ? 'Miss' : 'Ms'),
+            title: p.title || (p.gender === 'Male' ? 'Mr' : (p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT' ? 'Miss' : 'Ms')),
             first_name: p.name.split(' ')[0] || 'Unknown',
             last_name: p.name.split(' ').slice(1).join(' ') || 'User',
             dob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : '1990-01-01',
@@ -150,20 +155,31 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
             phone: contactDetails?.phone || ''
           };
 
-          const agent_reference = `TB-${booking.bookingId}`;
+          const agent_reference = booking.bookingId.replace(/-/g, '');
 
           const bookResult = await bookFlight(nexus_query, flight_keys, total_price, currency, paxes, client_details, agent_reference);
           
+          console.log('✈️ NEXUS BOOKING API RESPONSE:', JSON.stringify(bookResult, null, 2));
+
           if (bookResult && bookResult.success) {
             // Update booking with PNR from NexusDMC
             details.pnr = bookResult.response_ref; // Using response_ref as PNR for now
             details.nexus_response = bookResult;
             booking.details = details;
             booking.markModified('details');
+          } else {
+            apiBookingFailed = true;
+            details.api_error = bookResult?.error_msg || 'Nexus returned false success';
+            booking.details = details;
+            booking.markModified('details');
           }
-        } catch (nexusError) {
+        } catch (nexusError: any) {
           console.error('NexusDMC Booking failed after payment:', nexusError);
           // We still confirm the payment but might need manual intervention for the ticket
+          apiBookingFailed = true;
+          details.api_error = nexusError.message || 'Exception during Nexus booking';
+          booking.details = details;
+          booking.markModified('details');
         }
       } else if (booking.type === 'FLIGHT' && details && details.flight_keys && details.flight_keys.length > 0) {
         try {
@@ -172,32 +188,66 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
           
           let seatCount = 0;
           if (passengers.length > 0) {
-             seatCount = passengers.filter((p: any) => p.type !== 'Infant' || p.needsSeat).length;
+             seatCount = passengers.filter((p: any) => p.type?.toUpperCase() !== 'INFANT' || p.needsSeat).length;
           } else if (details.seats && Array.isArray(details.seats)) {
              seatCount = details.seats.length;
           }
           if (seatCount === 0) seatCount = 1;
 
           const sfIdClean = sfId.replace('SF_', '');
-          const seriesFare = await SeriesFare.findById(sfIdClean);
-          if (seriesFare) {
-             seriesFare.availableSeats = Math.max(0, seriesFare.availableSeats - seatCount);
-             if (seriesFare.availableSeats === 0) {
-                 seriesFare.status = 'SoldOut';
-             }
-             await seriesFare.save();
+          
+          // Check if valid ObjectId to prevent CastError
+          const mongoose = require('mongoose');
+          if (mongoose.Types.ObjectId.isValid(sfIdClean)) {
+            const seriesFare = await SeriesFare.findById(sfIdClean);
+            if (seriesFare) {
+               seriesFare.availableSeats = Math.max(0, seriesFare.availableSeats - seatCount);
+               if (seriesFare.availableSeats === 0) {
+                   seriesFare.status = 'SoldOut';
+               }
+               await seriesFare.save();
+            }
           }
         } catch (sfError) {
           console.error('Failed to decrement SeriesFare seats:', sfError);
         }
       }
 
-      booking.status = 'CONFIRMED';
+      if (apiBookingFailed) {
+        booking.status = 'CANCELLED';
+        booking.cancellationReason = 'Flight Booking API Failed - Auto Refunded';
+        booking.refundAmount = booking.totalAmount;
+        
+        try {
+          const Razorpay = require('razorpay');
+          const razorpay = new Razorpay({
+            key_id: process.env.RAZORPAY_KEY_ID || '',
+            key_secret: process.env.RAZORPAY_KEY_SECRET || ''
+          });
+          
+          await razorpay.payments.refund(razorpay_payment_id, {
+            amount: booking.totalAmount * 100, // in paise
+            speed: 'normal'
+          });
+          booking.refundStatus = 'COMPLETED';
+        } catch (refundError) {
+          console.error("Auto refund failed after API error:", refundError);
+          booking.refundStatus = 'FAILED';
+          // Status stays CANCELLED, but refund failed manually need to check
+        }
+      } else {
+        booking.status = 'CONFIRMED';
+      }
+      
       booking.razorpayPaymentId = razorpay_payment_id;
       booking.razorpaySignature = razorpay_signature;
       await booking.save();
 
-      res.status(200).json({ message: 'Payment verified successfully', booking });
+      if (apiBookingFailed) {
+        res.status(200).json({ message: 'Payment successful but ticketing failed. Full refund has been initiated.', booking, apiFailed: true });
+      } else {
+        res.status(200).json({ message: 'Payment verified successfully', booking });
+      }
     } else {
       res.status(400).json({ message: 'Invalid payment signature' });
     }

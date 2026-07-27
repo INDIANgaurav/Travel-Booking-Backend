@@ -5,6 +5,8 @@ import Flight from '../inventory/flight.model';
 import { searchFlightsNexus, checkAvailability } from '../flights/nexusdmc.service';
 import jwt from 'jsonwebtoken';
 import User from '../users/user.model';
+import SeriesFare from '../seriesFare/seriesFare.model';
+import { Request } from 'express';
 
 // @desc    Get recent searches for user
 // @route   GET /api/searches/recent
@@ -339,6 +341,25 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
       }
     });
 
+    // 3. Fetch from NexusDMC (only dates available)
+    try {
+      const { getAvailableDates } = require('../flights/nexusdmc.service');
+      const nexusDatesResult = await getAvailableDates(originIata, destinationIata);
+      
+      console.log('Nexus Dates Result:', JSON.stringify(nexusDatesResult, null, 2));
+
+      if (nexusDatesResult && nexusDatesResult.success && nexusDatesResult._data && nexusDatesResult._data.sector) {
+        const dateList = nexusDatesResult._data.sector.date || [];
+        dateList.forEach((dateStr: string) => {
+          if (!pricesMap[dateStr]) {
+            pricesMap[dateStr] = -1; // -1 indicates available but price unknown
+          }
+        });
+      }
+    } catch (nexusErr) {
+      console.error("Error fetching nexus dates for calendar:", nexusErr);
+    }
+
     res.json(pricesMap);
   } catch (error: any) {
     console.error("Calendar Prices Error:", error);
@@ -380,3 +401,129 @@ export const searchBuses = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Get all available flight cities
+// @route   GET /api/searches/cities
+// @access  Public
+export const getFlightCities = async (req: Request, res: Response) => {
+  try {
+    // This is ONLY a lookup dictionary for resolving IATA codes to readable names.
+    // It does NOT decide which cities to show — only DB + API data decides that.
+    const IATA_LOOKUP: Record<string, { name: string; airport: string; country: string }> = {
+      'DEL': { name: 'New Delhi', airport: 'Indira Gandhi International Airport', country: 'India' },
+      'BOM': { name: 'Mumbai', airport: 'Chhatrapati Shivaji International Airport', country: 'India' },
+      'NMI': { name: 'Navi Mumbai', airport: 'Navi Mumbai International Airport', country: 'India' },
+      'BLR': { name: 'Bengaluru', airport: 'Kempegowda International Airport', country: 'India' },
+      'GOI': { name: 'Goa', airport: 'Dabolim Airport', country: 'India' },
+      'GOX': { name: 'Goa (Mopa)', airport: 'Manohar International Airport', country: 'India' },
+      'CCU': { name: 'Kolkata', airport: 'Netaji Subhash Chandra Bose Airport', country: 'India' },
+      'HYD': { name: 'Hyderabad', airport: 'Rajiv Gandhi International Airport', country: 'India' },
+      'MAA': { name: 'Chennai', airport: 'Chennai International Airport', country: 'India' },
+      'AMD': { name: 'Ahmedabad', airport: 'Sardar Vallabhbhai Patel International Airport', country: 'India' },
+      'PNQ': { name: 'Pune', airport: 'Pune International Airport', country: 'India' },
+      'JAI': { name: 'Jaipur', airport: 'Jaipur International Airport', country: 'India' },
+      'LKO': { name: 'Lucknow', airport: 'Chaudhary Charan Singh International Airport', country: 'India' },
+      'COK': { name: 'Kochi', airport: 'Cochin International Airport', country: 'India' },
+      'TRV': { name: 'Thiruvananthapuram', airport: 'Trivandrum International Airport', country: 'India' },
+      'CCJ': { name: 'Kozhikode', airport: 'Calicut International Airport', country: 'India' },
+      'IXB': { name: 'Bagdogra', airport: 'Bagdogra Airport', country: 'India' },
+      'GAU': { name: 'Guwahati', airport: 'Lokpriya Gopinath Bordoloi International Airport', country: 'India' },
+      'SXR': { name: 'Srinagar', airport: 'Sheikh ul-Alam International Airport', country: 'India' },
+      'IXC': { name: 'Chandigarh', airport: 'Shaheed Bhagat Singh International Airport', country: 'India' },
+      'PAT': { name: 'Patna', airport: 'Jay Prakash Narayan International Airport', country: 'India' },
+      'VNS': { name: 'Varanasi', airport: 'Lal Bahadur Shastri International Airport', country: 'India' },
+      'NAG': { name: 'Nagpur', airport: 'Dr. Babasaheb Ambedkar International Airport', country: 'India' },
+      'BBI': { name: 'Bhubaneswar', airport: 'Biju Patnaik International Airport', country: 'India' },
+      'ATQ': { name: 'Amritsar', airport: 'Sri Guru Ram Dass Jee International Airport', country: 'India' },
+      'IDR': { name: 'Indore', airport: 'Devi Ahilyabai Holkar Airport', country: 'India' },
+      'RPR': { name: 'Raipur', airport: 'Swami Vivekananda Airport', country: 'India' },
+      'IXZ': { name: 'Port Blair', airport: 'Veer Savarkar International Airport', country: 'India' },
+      'BDQ': { name: 'Vadodara', airport: 'Vadodara Airport', country: 'India' },
+      'STV': { name: 'Surat', airport: 'Surat Airport', country: 'India' },
+      'BHO': { name: 'Bhopal', airport: 'Raja Bhoj Airport', country: 'India' },
+      'DXB': { name: 'Dubai', airport: 'Dubai International Airport', country: 'UAE' },
+      'SHJ': { name: 'Sharjah', airport: 'Sharjah International Airport', country: 'UAE' },
+      'AUH': { name: 'Abu Dhabi', airport: 'Abu Dhabi International Airport', country: 'UAE' },
+      'BKK': { name: 'Bangkok', airport: 'Suvarnabhumi Airport', country: 'Thailand' },
+      'DMK': { name: 'Bangkok (Don Mueang)', airport: 'Don Mueang International Airport', country: 'Thailand' },
+      'LHR': { name: 'London', airport: 'Heathrow Airport', country: 'UK' },
+      'SYD': { name: 'Sydney', airport: 'Kingsford Smith Airport', country: 'Australia' },
+      'BNE': { name: 'Brisbane', airport: 'Brisbane Airport', country: 'Australia' },
+      'MEL': { name: 'Melbourne', airport: 'Melbourne Airport', country: 'Australia' },
+      'AKL': { name: 'Auckland', airport: 'Auckland Airport', country: 'New Zealand' },
+      'DPS': { name: 'Bali', airport: 'Ngurah Rai International Airport', country: 'Indonesia' },
+      'SIN': { name: 'Singapore', airport: 'Changi Airport', country: 'Singapore' },
+      'KUL': { name: 'Kuala Lumpur', airport: 'Kuala Lumpur International Airport', country: 'Malaysia' },
+      'HKG': { name: 'Hong Kong', airport: 'Hong Kong International Airport', country: 'Hong Kong' },
+      'JFK': { name: 'New York', airport: 'John F. Kennedy International Airport', country: 'USA' },
+      'YYZ': { name: 'Toronto', airport: 'Toronto Pearson International Airport', country: 'Canada' },
+      'CDG': { name: 'Paris', airport: 'Charles de Gaulle Airport', country: 'France' },
+      'FRA': { name: 'Frankfurt', airport: 'Frankfurt Airport', country: 'Germany' },
+      'ICN': { name: 'Seoul', airport: 'Incheon International Airport', country: 'South Korea' },
+      'NRT': { name: 'Tokyo', airport: 'Narita International Airport', country: 'Japan' },
+      'CMB': { name: 'Colombo', airport: 'Bandaranaike International Airport', country: 'Sri Lanka' },
+      'DAC': { name: 'Dhaka', airport: 'Hazrat Shahjalal International Airport', country: 'Bangladesh' },
+      'KTM': { name: 'Kathmandu', airport: 'Tribhuvan International Airport', country: 'Nepal' },
+      'MLE': { name: 'Male', airport: 'Velana International Airport', country: 'Maldives' },
+      'DOH': { name: 'Doha', airport: 'Hamad International Airport', country: 'Qatar' },
+      'BAH': { name: 'Bahrain', airport: 'Bahrain International Airport', country: 'Bahrain' },
+      'MCT': { name: 'Muscat', airport: 'Muscat International Airport', country: 'Oman' },
+      'JED': { name: 'Jeddah', airport: 'King Abdulaziz International Airport', country: 'Saudi Arabia' },
+      'RUH': { name: 'Riyadh', airport: 'King Khalid International Airport', country: 'Saudi Arabia' },
+    };
+
+    // Step 1: Collect ONLY codes that actually have flights (from DB + API)
+    const availableCodes = new Set<string>();
+
+    // From Flights DB collection
+    const flightDep = await Flight.distinct('departureAirportCode');
+    const flightArr = await Flight.distinct('arrivalAirportCode');
+    (flightDep as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
+    (flightArr as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
+
+    // From SeriesFare DB collection
+    const sfOrigins = await SeriesFare.distinct('origin');
+    const sfDestinations = await SeriesFare.distinct('destination');
+    (sfOrigins as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
+    (sfDestinations as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
+
+    // From Nexus DMC API sectors
+    try {
+      const { getAvailableSectors } = require('../flights/nexusdmc.service');
+      const sectorsResult = await getAvailableSectors();
+      if (sectorsResult?.success && sectorsResult?._data?.sectors) {
+        for (const sector of sectorsResult._data.sectors) {
+          if (sector.origin) availableCodes.add(sector.origin.toUpperCase());
+          if (sector.destination) availableCodes.add(sector.destination.toUpperCase());
+        }
+      }
+    } catch (nexusErr) {
+      // Nexus API might be down, continue with DB results
+    }
+
+    // Step 2: Build the final list using ONLY available codes, resolving names from lookup
+    const cities = Array.from(availableCodes).map(code => {
+      const info = IATA_LOOKUP[code];
+      return {
+        code,
+        name: info?.name || code,
+        airport: info?.airport || `${code} Airport`,
+        country: info?.country || 'Unknown'
+      };
+    });
+
+    // Sort: known cities first (with proper names), then unknown codes
+    cities.sort((a, b) => {
+      const aKnown = IATA_LOOKUP[a.code] ? 0 : 1;
+      const bKnown = IATA_LOOKUP[b.code] ? 0 : 1;
+      if (aKnown !== bKnown) return aKnown - bKnown;
+      return a.name.localeCompare(b.name);
+    });
+
+    res.json(cities);
+  } catch (error: any) {
+    console.error('Error fetching flight cities:', error);
+    res.status(500).json({ message: 'Failed to fetch flight cities' });
+  }
+};
+
