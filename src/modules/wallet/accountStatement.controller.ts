@@ -1,7 +1,5 @@
 import { Request, Response } from 'express';
-import Transaction from './wallet.model'; // Assuming this is the transaction model
-// Define the shape of our ledger data
-import Booking from '../bookings/booking.model';
+import Transaction from './wallet.model'; 
 
 export const getAccountStatement = async (req: Request, res: Response) => {
   try {
@@ -9,50 +7,72 @@ export const getAccountStatement = async (req: Request, res: Response) => {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const search = ((req.query.search as string) || '').toLowerCase();
+    const fromDateStr = req.query.fromDate as string;
+    const toDateStr = req.query.toDate as string;
 
-    // Fetch real transactions for the logged-in agent
-    const transactions = await Transaction.find({ user: agentId }).sort({ date: -1 });
+    const filter: any = { user: agentId };
 
-    // Map them to the required ledger format
-    // Since Transaction schema currently lacks PNR, Passenger etc, we leave them blank or map what we have
-    let mappedData = transactions.map((txn, index) => {
+    if (fromDateStr && toDateStr) {
+      const from = new Date(fromDateStr);
+      from.setUTCHours(0, 0, 0, 0);
+      const to = new Date(toDateStr);
+      to.setUTCHours(23, 59, 59, 999);
+      filter.date = { $gte: from, $lte: to };
+    }
+
+    // Fetch transactions in chronological order to calculate running balance
+    const transactions = await Transaction.find(filter).sort({ date: 1 });
+
+    let currentBalance = 0;
+    let mappedData = transactions.map((txn) => {
       const isCredit = txn.type === 'CREDIT';
       
+      // Calculate running balance
+      if (isCredit) {
+        currentBalance += txn.amount;
+      } else {
+        currentBalance -= txn.amount;
+      }
+
       return {
-        sNo: 0, // will set later after filter
-        referenceNo: txn._id.toString().substring(18).toUpperCase(), // last 6 chars as ref
-        pnr: '—', // Not in transaction model yet
-        productName: txn.description.includes('Topup') ? 'TopUp' : 'Service', // Infer product from desc
+        sNo: 0, 
+        referenceNo: txn.referenceNo || txn._id.toString().substring(18).toUpperCase(),
+        pnr: txn.pnr || '—', 
+        productName: txn.productName || (txn.description.toLowerCase().includes('topup') ? 'Wallet TopUp' : 'Service'), 
         description: txn.description,
-        passengerName: '—', 
+        passengerName: txn.passengerName || '—', 
         dateTime: txn.date,
-        grossAmount: isCredit ? 0 : txn.amount,
-        markup: 0,
-        commission: 0,
-        tds: 0,
-        sgst: 0,
-        cgst: 0,
-        igst: 0,
-        penalty: 0,
+        grossAmount: txn.grossAmount || (isCredit ? 0 : txn.amount),
+        markup: txn.markup || 0,
+        commission: txn.commission || 0,
+        tds: txn.tds || 0,
+        sgst: txn.sgst || 0,
+        cgst: txn.cgst || 0,
+        igst: txn.igst || 0,
+        penalty: txn.penalty || 0,
         credit: isCredit ? txn.amount : 0,
-        netAmountDebited: isCredit ? 0 : txn.amount,
-        promoAmount: 0,
+        netAmountDebited: txn.netAmountDebited || (!isCredit ? txn.amount : 0),
+        promoAmount: txn.promoAmount || 0,
         amount: txn.amount,
         userRemarks: txn.paymentMethod || '',
-        balance: 0 // We'd need a running balance logic, but keeping 0 for now unless fetched
+        balance: currentBalance
       };
     });
+
+    // Reverse to show latest first
+    mappedData.reverse();
 
     // Filter by search term
     if (search) {
       mappedData = mappedData.filter(
         item => 
           item.referenceNo.toLowerCase().includes(search) ||
-          item.description.toLowerCase().includes(search)
+          item.description.toLowerCase().includes(search) ||
+          item.pnr.toLowerCase().includes(search)
       );
     }
     
-    // Assign S.No
+    // Assign S.No based on new order
     mappedData.forEach((item, idx) => {
       item.sNo = idx + 1;
     });
