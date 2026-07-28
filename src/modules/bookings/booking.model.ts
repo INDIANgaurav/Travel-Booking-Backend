@@ -24,13 +24,17 @@ export interface IBooking extends Document {
     from?: string;
     to?: string;
     destination?: string;
-    passengers?: Array<{ name: string; gender: string; type: string }>;
+    passengers?: Array<{ name: string; gender: string; type: string; dob?: string; passportNum?: string; passportExpiry?: string; nationality?: string; }>;
     contactDetails?: { email: string; phone: string; countryCode: string };
     seats?: string[];
     flightId?: mongoose.Types.ObjectId;
     pnr?: string;
+    nexus_response?: any;
+    api_error?: string;
     flight_keys?: string[];
     nexus_query?: any;
+    currency?: string;
+    total_price?: number;
     
     // Hotel specific details
     hotelId?: string;
@@ -71,14 +75,22 @@ const bookingSchema = new Schema<IBooking>(
       passengers: [{ 
         name: String, 
         gender: String, 
-        type: { type: String }
+        type: { type: String },
+        dob: String,
+        passportNum: String,
+        passportExpiry: String,
+        nationality: String
       }],
       contactDetails: { email: String, phone: String, countryCode: String },
       seats: [String],
       flightId: { type: Schema.Types.ObjectId, ref: 'Flight' },
-      pnr: { type: String },
-      flight_keys: [String],
+      pnr: String,
+      nexus_response: Schema.Types.Mixed,
+      api_error: String,
+      flight_keys: Array,
       nexus_query: Schema.Types.Mixed,
+      currency: String,
+      total_price: Number,
       
       // Hotel Specific
       hotelId: String,

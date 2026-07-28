@@ -140,15 +140,39 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
           const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
           
           // Map passengers to NexusDMC expected format
-          const paxes = (passengers || []).map((p: any) => ({
-            title: p.title || (p.gender === 'Male' ? 'Mr' : (p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT' ? 'Miss' : 'Ms')),
+          const paxes = (passengers || []).map((p: any) => {
+            const isChildOrInfant = p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT';
+            let finalTitle = p.title || (p.gender === 'Male' ? (isChildOrInfant ? 'Mstr' : 'Mr') : (isChildOrInfant ? 'Miss' : 'Ms'));
+            
+            // Normalize to Title Case and strictly enforce valid titles per passenger type
+            let upperTitle = finalTitle.toUpperCase();
+            
+            if (isChildOrInfant) {
+              if (upperTitle === 'MR' || upperTitle === 'MSTR') finalTitle = 'Mstr';
+              else if (upperTitle === 'MS' || upperTitle === 'MRS' || upperTitle === 'MISS') finalTitle = 'Miss';
+              else finalTitle = 'Mstr'; // fallback
+            } else {
+              if (upperTitle === 'MSTR' || upperTitle === 'MR') finalTitle = 'Mr';
+              else if (upperTitle === 'MISS' || upperTitle === 'MS') finalTitle = 'Ms';
+              else if (upperTitle === 'MRS') finalTitle = 'Mrs';
+              else finalTitle = 'Mr'; // fallback
+            }
+
+            let defaultDob = '1990-01-01';
+            if (p.type?.toUpperCase() === 'CHILD') defaultDob = '2018-01-01'; // 8 years old
+            if (p.type?.toUpperCase() === 'INFANT') defaultDob = '2025-01-01'; // 1 year old
+            
+            return {
+              title: finalTitle,
             first_name: p.name.split(' ')[0] || 'Unknown',
             last_name: p.name.split(' ').slice(1).join(' ') || 'User',
-            dob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : '1990-01-01',
+            dob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : defaultDob,
             passport_num: p.passportNum || null,
             passport_expiry_date: p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0] : null,
-            nationality: p.nationality || 'IN'
-          }));
+            nationality: p.nationality || 'IN',
+            type: isChildOrInfant ? (p.type?.toUpperCase() === 'CHILD' ? 'child' : 'infant') : 'adult'
+          };
+          });
 
           const client_details = {
             email: contactDetails?.email || '',

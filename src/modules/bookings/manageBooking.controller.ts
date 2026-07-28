@@ -14,20 +14,22 @@ export const getManageBookings = async (req: AuthRequest, res: Response) => {
       // Users and Travel Agents see only bookings they created
       query.user = agentId;
     } else if (userRole === 'SUPPLIER_AGENT') {
-      // Suppliers see bookings made against their inventory
+      // Suppliers see bookings made against their inventory OR bookings they created themselves
       const SeriesFare = require('../seriesFare/seriesFare.model').default;
       const supplierFares = await SeriesFare.find({ supplierId: agentId }).select('_id').lean();
       
-      if (!supplierFares.length) {
-        return res.status(200).json({ totalRecords: 0, data: [] });
-      }
-
       const fareIds = supplierFares.map((f: any) => f._id.toString());
-      query.type = 'FLIGHT';
-      query.$or = [
-        { 'details.flight_keys': { $in: fareIds.map((id: string) => `SF_${id}`) } },
-        { 'details.flight_keys': { $in: fareIds } }
-      ];
+      
+      if (fareIds.length > 0) {
+        query.$or = [
+          { user: agentId }, // Their own bookings (like Nexus API flights they booked)
+          { 'details.flight_keys': { $in: fareIds.map((id: string) => `SF_${id}`) } },
+          { 'details.flight_keys': { $in: fareIds } }
+        ];
+      } else {
+        // If they have no inventory, they can still see their own bookings
+        query.user = agentId;
+      }
     }
 
     if (product) {

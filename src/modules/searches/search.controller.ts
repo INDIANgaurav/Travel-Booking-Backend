@@ -127,9 +127,9 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
         let price = offer.total_price;
         
         // Apply markup for non-agents (e.g. 10%)
-        if (!isAgent) {
-          price = price * 1.10;
-        }
+        // if (!isAgent) {
+        //   price = price * 1.10;
+        // }
         
         price = Math.round(price);
 
@@ -145,9 +145,10 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
           departureTime: leg.departure_time,
           arrivalTime: leg.arrival_time,
           durationMinutes: durationMinutes,
-          price: price,
+          price: price, // Marked up price for UI
           stops: flightSegment.legs.length - 1,
-          nexus_query: searchResult._data.query // Need to save this to pass back for Check Avail / Booking
+          nexus_query: searchResult._data.query, // Need to save this to pass back for Check Avail / Booking
+          nexus_total_price: offer.total_price // The EXACT price Nexus expects in Book API
         };
       });
     }
