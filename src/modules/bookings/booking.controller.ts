@@ -50,8 +50,6 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
 
     await newBooking.save();
 
-    console.log("New Flight Booking created! Reference ID:", newBooking.bookingId);
-
     res.status(201).json({
       booking: newBooking,
       orderId: order.id,
@@ -95,8 +93,6 @@ export const createHotelBooking = async (req: AuthRequest, res: Response) => {
     });
 
     await newBooking.save();
-
-    console.log("New Hotel Booking created! Reference ID:", newBooking.bookingId);
 
     res.status(201).json({
       booking: newBooking,
@@ -183,8 +179,6 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
 
           const bookResult = await bookFlight(nexus_query, flight_keys, total_price, currency, paxes, client_details, agent_reference);
           
-          console.log('✈️ NEXUS BOOKING API RESPONSE:', JSON.stringify(bookResult, null, 2));
-
           if (bookResult && bookResult.success) {
             // Update booking with PNR from NexusDMC
             details.pnr = bookResult.response_ref; // Using response_ref as PNR for now

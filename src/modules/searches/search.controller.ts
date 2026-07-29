@@ -118,10 +118,11 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
       // Map NexusDMC offers to our frontend's expected Flight schema
       flights = nexusFlights.map((offer: any) => {
         const flightSegment = offer.segments[0];
-        const leg = flightSegment.legs[0]; // For simplicity, take the first leg
+        const leg = flightSegment.legs[0]; // First leg for departure
+        const lastLeg = flightSegment.legs[flightSegment.legs.length - 1]; // Last leg for arrival
         
         const depTime = new Date(leg.departure_time);
-        const arrTime = new Date(leg.arrival_time);
+        const arrTime = new Date(lastLeg.arrival_time);
         const durationMinutes = flightSegment.duration;
 
         let price = offer.total_price;
@@ -140,15 +141,23 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
           flightNumber: `${leg.airline}-${leg.flight_number}`,
           departureCity: leg.origin,
           departureAirportCode: leg.origin,
-          arrivalCity: leg.destination,
-          arrivalAirportCode: leg.destination,
+          arrivalCity: lastLeg.destination,
+          arrivalAirportCode: lastLeg.destination,
           departureTime: leg.departure_time,
-          arrivalTime: leg.arrival_time,
+          arrivalTime: lastLeg.arrival_time,
           durationMinutes: durationMinutes,
           price: price, // Marked up price for UI
           stops: flightSegment.legs.length - 1,
           nexus_query: searchResult._data.query, // Need to save this to pass back for Check Avail / Booking
-          nexus_total_price: offer.total_price // The EXACT price Nexus expects in Book API
+          nexus_total_price: offer.total_price, // The EXACT price Nexus expects in Book API
+          seatsAvailable: offer.seats_available,
+          adultPrice: offer.adult_price,
+          childPrice: offer.child_price,
+          infantPrice: offer.infant_price,
+          checkinBaggage: offer.checkin_baggage,
+          cabinBaggage: offer.cabin_baggage,
+          cabinClass: offer.cabin_type,
+          inputRequirements: searchResult._data.input_requirements
         };
       });
     }
