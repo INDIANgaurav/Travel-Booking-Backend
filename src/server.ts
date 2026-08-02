@@ -26,6 +26,7 @@ import paxCalendarRoutes from './modules/bookings/paxCalendar.routes';
 import invoiceRoutes from './modules/bookings/invoice.routes';
 import creditNoteRoutes from './modules/wallet/creditNote.routes';
 import accountStatementRoutes from './modules/wallet/accountStatement.routes';
+import aiRoutes from './modules/ai/ai.routes';
 
 connectDB();
 
@@ -64,6 +65,7 @@ app.use('/api/pax-calendar', paxCalendarRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/credit-notes', creditNoteRoutes);
 app.use('/api/account-statement', accountStatementRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Global Error Handler to catch [object Object] issues
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

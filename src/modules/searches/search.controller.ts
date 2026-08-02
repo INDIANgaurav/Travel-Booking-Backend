@@ -84,7 +84,10 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
     const childCount = Number(children) || 0;
     const infantCount = Number(infants) || 0;
 
-    const targetDate = date ? new Date(date as string) : new Date(Date.now() + 86400000); // tomorrow by default
+    let targetDate = date ? new Date(date as string) : new Date(Date.now() + 86400000);
+    if (isNaN(targetDate.getTime())) {
+      targetDate = new Date(Date.now() + 86400000); // fallback to tomorrow if date is invalid
+    }
     const formattedDate = targetDate.toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD
 
     const segment = `${originIata}-${destinationIata}-${formattedDate}`;
