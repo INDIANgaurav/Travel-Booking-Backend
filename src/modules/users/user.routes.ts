@@ -1,5 +1,15 @@
 import express from 'express';
-import { getUserProfile, updateUserProfile, changePassword, verifyOtp, addSavedTraveller, submitAgentOnboarding } from './user.controller';
+import { 
+  getUserProfile, 
+  updateUserProfile, 
+  changePassword, 
+  verifyOtp, 
+  addSavedTraveller, 
+  submitAgentOnboarding,
+  getSupplierStaff,
+  addSupplierStaff,
+  updateSupplierStaff 
+} from './user.controller';
 import { protect } from '../../middleware/auth.middleware';
 
 const router = express.Router();
@@ -17,5 +27,11 @@ router.post('/travellers', addSavedTraveller);
 
 // Agent Routes
 router.put('/agent/onboarding', submitAgentOnboarding);
+
+// Supplier Staff Routes
+router.route('/supplier-staff')
+  .get(getSupplierStaff)
+  .post(addSupplierStaff);
+router.put('/supplier-staff/:id', updateSupplierStaff);
 
 export default router;

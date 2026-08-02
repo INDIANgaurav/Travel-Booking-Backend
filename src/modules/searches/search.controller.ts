@@ -46,7 +46,16 @@ export const saveRecentSearch = async (req: AuthRequest, res: Response) => {
 // Helper function to map common city names to IATA codes
 const getIataCode = (cityName: string): string => {
   if (!cityName) return '';
-  const city = cityName.trim().toLowerCase();
+  const city = cityName.trim();
+  
+  // If it's already a 3 letter code, just return it
+  if (city.length === 3) return city.toUpperCase();
+  
+  // Try to extract from format like "New York (JFK)"
+  const match = city.match(/\(([A-Z]{3})\)/i);
+  if (match) return match[1].toUpperCase();
+
+  const cityLower = city.toLowerCase();
   const map: Record<string, string> = {
     'new delhi': 'DEL',
     'delhi': 'DEL',
@@ -63,28 +72,11 @@ const getIataCode = (cityName: string): string => {
     'dubai': 'DXB',
     'singapore': 'SIN'
   };
-  return map[city] || cityName.toUpperCase().substring(0, 3);
+  return map[cityLower] || city.toUpperCase().substring(0, 3);
 };
 
-export const searchFlights = async (req: AuthRequest, res: Response) => {
-  try {
-    const { from, to, date, adults, children, infants, cabinClass, returnDate, tripType, stops, morningDeparture, passengers } = req.query;
-
-    let isAgent = false;
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded: any = jwt.verify(token, process.env.JWT_SECRET || '');
-        const user = await User.findById(decoded.id).select('role agentStatus');
-        if (user && (user.role === 'SUPER_ADMIN' || user.role === 'SUB_ADMIN' || (user.role === 'TRAVEL_AGENT' && user.agentStatus === 'APPROVED'))) {
-          isAgent = true;
-        }
-      } catch (e) {
-        // Ignore token errors for public search
-      }
-    }
-    console.log("✈️ Flight Search Request Received:", req.query);
-    
+export const getFlightsData = async (queryParams: any, isAgent: boolean = false) => {
+    const { from, to, date, adults, children, infants, cabinClass, returnDate, tripType, stops, morningDeparture, passengers } = queryParams;
     const originIata = getIataCode(from as string);
     const destinationIata = getIataCode(to as string);
     
@@ -182,6 +174,14 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
         const depTime = `${dateStr}T${sf.departureTime}:00`;
         const arrTime = `${dateStr}T${sf.arrivalTime}:00`;
+        
+        let depDateObj = new Date(depTime);
+        let arrDateObj = new Date(arrTime);
+        if (arrDateObj < depDateObj) {
+          arrDateObj.setDate(arrDateObj.getDate() + 1); // Arrival is next day
+        }
+        const durationMinutes = Math.round((arrDateObj.getTime() - depDateObj.getTime()) / 60000);
+
         const basePrice = Math.round((sf.adtFare * adultCount) + (sf.chdFare * childCount) + (sf.infFare * infantCount));
         const commissionTotal = (sf.agentCommission || 0) * (adultCount + childCount); // Assuming commission applies to adults and children
         const price = basePrice + commissionTotal; // Show total (Base + Commission) on search results page
@@ -200,9 +200,12 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
           arrivalCity: sf.destination,
           arrivalAirportCode: sf.destination,
           departureTime: depTime,
-          arrivalTime: arrTime,
-          durationMinutes: 135,
+          arrivalTime: arrDateObj.toISOString().slice(0, 19), // Save the calculated exact time
+          durationMinutes: durationMinutes > 0 ? durationMinutes : 135, // Fallback if negative
           price: price, // Show exact base + commission without additional markup
+          adultPrice: sf.adtFare + (sf.agentCommission || 0),
+          childPrice: sf.chdFare + (sf.agentCommission || 0),
+          infantPrice: sf.infFare,
           stops: 0,
           isSeriesFare: true,
           seriesFareId: sf.sfId,
@@ -260,6 +263,62 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
     // Sort by price by default
     flights.sort((a: any, b: any) => a.price - b.price);
 
+    return flights;
+};
+
+export const getNearestFlightsData = async (from: string, to: string) => {
+    const originIata = getIataCode(from);
+    const destinationIata = getIataCode(to);
+    
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const SeriesFare = require('../seriesFare/seriesFare.model').default;
+    const sfFilter: any = {
+      origin: { $regex: new RegExp(`^${originIata}$`, 'i') },
+      destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
+      status: { $regex: new RegExp('^Active$', 'i') },
+      travelDate: { $gte: startOfDay }
+    };
+
+    const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(3);
+    
+    const sfMapped = seriesFares.map((sf: any) => {
+      const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+      const depTime = `${dateStr}T${sf.departureTime}:00`;
+      return {
+        airline: sf.airline,
+        flightNumber: sf.flightNo || 'SF-1107',
+        departureCity: sf.origin,
+        arrivalCity: sf.destination,
+        departureTime: depTime,
+        price: sf.adtFare + (sf.agentCommission || 0),
+        isSeriesFare: true,
+        availableSeats: sf.availableSeats
+      };
+    });
+
+    return sfMapped;
+};
+
+export const searchFlights = async (req: AuthRequest, res: Response) => {
+  try {
+    let isAgent = false;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded: any = jwt.verify(token, process.env.JWT_SECRET || '');
+        const user = await User.findById(decoded.id).select('role agentStatus');
+        if (user && (user.role === 'SUPER_ADMIN' || user.role === 'SUB_ADMIN' || (user.role === 'TRAVEL_AGENT' && user.agentStatus === 'APPROVED'))) {
+          isAgent = true;
+        }
+      } catch (e) {
+        // Ignore token errors for public search
+      }
+    }
+    console.log("✈️ Flight Search Request Received:", req.query);
+
+    const flights = await getFlightsData(req.query, isAgent);
     res.json(flights);
   } catch (error: any) {
     console.error("Flight Search Catch Error:", error);

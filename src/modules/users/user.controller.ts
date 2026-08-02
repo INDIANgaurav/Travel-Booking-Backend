@@ -188,3 +188,74 @@ export const submitAgentOnboarding = async (req: AuthRequest, res: Response) => 
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Get supplier staff users
+// @route   GET /api/users/supplier-staff
+// @access  Private (Supplier only)
+export const getSupplierStaff = async (req: AuthRequest, res: Response) => {
+  try {
+    const users = await User.find({ 
+      role: 'SUPPLIER_AGENT', 
+      companyName: req.user.companyName,
+      _id: { $ne: req.user._id } 
+    });
+    res.json(users);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Add supplier staff
+// @route   POST /api/users/supplier-staff
+// @access  Private (Supplier only)
+export const addSupplierStaff = async (req: AuthRequest, res: Response) => {
+  try {
+    const { name, email, phone, password } = req.body;
+    
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    const user = await User.create({
+      name,
+      email,
+      phone,
+      password,
+      role: 'SUPPLIER_AGENT',
+      companyName: req.user.companyName,
+      agentStatus: 'APPROVED',
+      isActive: true,
+    });
+
+    res.status(201).json(user);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Update supplier staff
+// @route   PUT /api/users/supplier-staff/:id
+// @access  Private (Supplier only)
+export const updateSupplierStaff = async (req: AuthRequest, res: Response) => {
+  try {
+    const { isActive, name, phone, email } = req.body;
+    const user = await User.findOne({ _id: req.params.id, companyName: req.user.companyName });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (isActive !== undefined) user.isActive = isActive;
+    if (name !== undefined) user.name = name;
+    if (phone !== undefined) user.phone = phone;
+    if (email !== undefined) user.email = email;
+
+    if (req.body.agentStatus !== undefined) user.agentStatus = req.body.agentStatus;
+
+    const updatedUser = await user.save();
+    res.json(updatedUser);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

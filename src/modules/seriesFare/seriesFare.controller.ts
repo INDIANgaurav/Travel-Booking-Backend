@@ -25,8 +25,8 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       status,
     } = req.body;
 
-    const count = await SeriesFare.countDocuments();
-    const sfId = `SF${5120 + count + 1}`;
+    // Generate a unique ID using timestamp and random number to avoid duplicate key errors
+    const sfId = `SF${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
 
     const seriesFare = await SeriesFare.create({
       supplierId: req.user?._id,
@@ -243,6 +243,92 @@ export const getSupplierBookingHistory = async (req: AuthRequest, res: Response)
     res.json(enriched);
   } catch (error: any) {
     console.error('Supplier booking history error:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getSeriesFareQueue = async (req: AuthRequest, res: Response) => {
+  try {
+    const supplierId = req.user?._id;
+    const { refNo, pnr, status, fromDate, toDate } = req.query;
+
+    const supplierFares = await SeriesFare.find({ supplierId }).select('_id sfId airline origin destination flightNo travelDate adtFare').lean();
+    
+    if (!supplierFares.length) {
+      return res.json([]);
+    }
+
+    const fareMap: Record<string, any> = {};
+    const fareIds: string[] = [];
+    supplierFares.forEach(f => {
+      const idStr = f._id.toString();
+      fareIds.push(idStr);
+      fareMap[idStr] = f;
+    });
+
+    const Booking = require('../bookings/booking.model').default;
+    
+    const queueFilter: any = {
+      type: 'FLIGHT',
+      $or: [
+        { 'details.flight_keys': { $in: fareIds.map(id => `SF_${id}`) } },
+        { 'details.flight_keys': { $in: fareIds } }
+      ]
+    };
+
+    if (refNo) queueFilter.bookingId = new RegExp(refNo as string, 'i');
+    if (pnr) queueFilter['details.pnr'] = new RegExp(pnr as string, 'i');
+    if (status && status !== 'All') queueFilter.status = (status as string).toUpperCase();
+    else queueFilter.status = { $in: ['PENDING', 'ACTIVE'] }; // Default to pending/active queue items
+
+    if (fromDate && toDate) {
+      const from = new Date(fromDate as string);
+      from.setHours(0, 0, 0, 0);
+      const to = new Date(toDate as string);
+      to.setHours(23, 59, 59, 999);
+      queueFilter.createdAt = { $gte: from, $lte: to };
+    }
+
+    const queueItems = await Booking.find(queueFilter)
+      .populate('user', 'name companyName email phone')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const enriched = queueItems.map((b: any) => {
+      const sfKey = b.details?.flight_keys?.[0] || '';
+      const cleanId = sfKey.replace('SF_', '');
+      return {
+        ...b,
+        seriesFareInfo: fareMap[cleanId] || null
+      };
+    });
+
+    res.json(enriched);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateSeriesFareQueueStatus = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status, pnr } = req.body;
+    const Booking = require('../bookings/booking.model').default;
+
+    const booking = await Booking.findById(id);
+    if (!booking) {
+      return res.status(404).json({ message: 'Queue item not found' });
+    }
+
+    booking.status = status;
+    if (pnr) {
+      if (!booking.details) booking.details = {};
+      booking.details.pnr = pnr;
+    }
+
+    await booking.save();
+    res.json(booking);
+  } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };

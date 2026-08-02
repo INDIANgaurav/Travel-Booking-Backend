@@ -224,6 +224,11 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
                    seriesFare.status = 'SoldOut';
                }
                await seriesFare.save();
+               
+               // Assign the group PNR to the customer's booking
+               details.pnr = seriesFare.airlinePnr || 'PENDING';
+               booking.details = details;
+               booking.markModified('details');
             }
           }
         } catch (sfError) {

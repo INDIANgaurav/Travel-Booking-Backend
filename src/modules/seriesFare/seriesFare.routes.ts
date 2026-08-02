@@ -6,6 +6,8 @@ import {
   deleteSeriesFare,
   getSupplierSummary,
   getSupplierBookingHistory,
+  getSeriesFareQueue,
+  updateSeriesFareQueueStatus
 } from './seriesFare.controller';
 import { protect } from '../../middleware/auth.middleware';
 
@@ -17,6 +19,8 @@ router.route('/')
 
 router.get('/summary', protect, getSupplierSummary);
 router.get('/booking-history', protect, getSupplierBookingHistory);
+router.get('/queue', protect, getSeriesFareQueue);
+router.put('/queue/:id/status', protect, updateSeriesFareQueueStatus);
 
 router.route('/:id')
   .put(protect, updateSeriesFare)
