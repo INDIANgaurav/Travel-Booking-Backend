@@ -284,7 +284,7 @@ export const getNearestFlightsData = async (from: string, to: string) => {
       travelDate: { $gte: startOfDay }
     };
 
-    const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(3);
+    const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(5);
     
     const sfMapped = seriesFares.map((sf: any) => {
       const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
@@ -301,7 +301,77 @@ export const getNearestFlightsData = async (from: string, to: string) => {
       };
     });
 
-    return sfMapped;
+    const dbFilter: any = {
+      departureAirportCode: { $regex: new RegExp(`^${originIata}$`, 'i') },
+      arrivalAirportCode: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
+      departureTime: { $gte: startOfDay }
+    };
+
+    const dbFlights = await Flight.find(dbFilter).sort({ departureTime: 1 }).limit(5).lean();
+
+    const dbMapped = dbFlights.map((f: any) => ({
+        airline: f.airline,
+        flightNumber: f.flightNumber,
+        departureCity: f.departureCity,
+        arrivalCity: f.arrivalCity,
+        departureTime: f.departureTime,
+        price: f.price,
+        isInventoryFare: true,
+        availableSeats: f.availableSeats || 50
+    }));
+
+    let nexusMapped: any[] = [];
+    try {
+      const { getAvailableDates, searchFlightsNexus } = require('../flights/nexusdmc.service');
+      const nexusDatesResult = await getAvailableDates(originIata, destinationIata);
+      
+      if (nexusDatesResult?.success && nexusDatesResult?._data?.sector?.date) {
+        const dateList: string[] = nexusDatesResult._data.sector.date;
+        const todayStr = startOfDay.toISOString().split('T')[0];
+        
+        const upcomingNexusDates = dateList
+          .filter(d => d >= todayStr)
+          .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
+          .slice(0, 2);
+
+        for (const dateStr of upcomingNexusDates) {
+           const formattedDate = dateStr.replace(/-/g, ''); // YYYYMMDD
+           const segment = `${originIata}-${destinationIata}-${formattedDate}`;
+           const pax = `1-0-0`;
+           try {
+              const searchResult = await searchFlightsNexus(segment, pax);
+              if (searchResult?.success && searchResult?._data?.flights?.length > 0) {
+                 const offer = searchResult._data.flights[0];
+                 const flightSegment = offer.segments[0];
+                 const leg = flightSegment.legs[0];
+                 const lastLeg = flightSegment.legs[flightSegment.legs.length - 1];
+                 
+                 nexusMapped.push({
+                    airline: leg.airline,
+                    flightNumber: `${leg.airline}-${leg.flight_number}`,
+                    departureCity: leg.origin,
+                    arrivalCity: lastLeg.destination,
+                    departureTime: leg.departure_time,
+                    price: Math.round(offer.total_price),
+                    isSeriesFare: true,
+                    availableSeats: offer.seats_available
+                 });
+              }
+           } catch (e) {
+              console.error(`Nexus search failed for nearest fallback ${segment}`);
+           }
+        }
+      }
+    } catch (err) {
+      console.error("Nexus available dates error in nearest fallback");
+    }
+
+    let allFlights = [...sfMapped, ...dbMapped, ...nexusMapped];
+    
+    // Sort all flights chronologically by departure date
+    allFlights.sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime());
+    
+    return allFlights.slice(0, 3);
 };
 
 export const searchFlights = async (req: AuthRequest, res: Response) => {

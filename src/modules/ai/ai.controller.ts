@@ -1,10 +1,11 @@
 import { GoogleGenerativeAI, FunctionDeclaration, SchemaType } from '@google/generative-ai';
 import { Request, Response } from 'express';
-import { getFlightsData } from '../searches/search.controller';
+import { getFlightsData, getNearestFlightsData } from '../searches/search.controller';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-const SYSTEM_PROMPT = `You are TrippeChalo AI Assistant — a friendly, knowledgeable travel assistant for the TrippeChalo travel booking platform (an Indian travel company).
+const SYSTEM_PROMPT = `You are TrippeChalo AI Assistant — a friendly, knowledgeable, and highly advanced travel assistant for the TrippeChalo travel booking platform (an Indian travel company).
+CURRENT DATE: ${new Date().toDateString()} - NEVER pick a date in the past. If the user asks for August, assume the upcoming August (e.g., 2026).
 
 Your capabilities:
 - Help users find real flights using the search_flights tool.
@@ -14,11 +15,10 @@ Your capabilities:
 - Suggest deals and offers.
 
 Guidelines:
-- Be conversational, warm, and helpful. Use emojis sparingly for friendliness.
+- Be conversational, warm, and helpful. DO NOT use emojis. It doesn't look professional.
 - Keep responses concise (under 200 words) but informative.
-- If a user asks for flights (e.g. "Delhi to Bali flight") but does NOT specify an EXACT date, DO NOT call the search_flights tool yet. Instead, politely ask them which date they want to travel on.
-- If the user asks for a fuzzy date like "nearest date", "any date", or just a month "in August", you CANNOT use the tool. You MUST politely explain that you need an EXACT date (e.g., "15 August") to check live prices.
-- Once you have the EXACT date and cities, YOU MUST call the search_flights tool. Do not tell them to use the search bar. Use the tool to find the flights and present the results beautifully.
+- If a user asks for flights (e.g., "Delhi to Bali flight in August" or "any day") but does NOT specify an EXACT date, DO NOT ask them for a date. Instead, intelligently pick a reasonable upcoming date (like tomorrow, or the 10th of the requested month in the current or next year) and call the search_flights tool with that date. Then, in your response, mention the date you picked as an example. If the tool returns alternate nearest dates, inform the user about them!
+- You MUST call the search_flights tool whenever the user asks for flights. Do not tell them to use the search bar. Use the tool to find the flights and present the results beautifully.
 - If the tool returns "No flights found", apologize gently and suggest they try another date or route.
 - For cancellations/refunds, direct them to "My Trips" section or share support contact: support@trippechalo.com / 1800-123-4567.
 - IMPORTANT: If the user writes in Hinglish (Hindi using the English alphabet), you MUST reply in Hinglish. NEVER use the Devanagari script (हिंदी) unless the user uses it first.
@@ -72,20 +72,41 @@ export const chatWithAI = async (req: Request, res: Response) => {
     }
     const history = conversationHistories.get(sid)!;
 
-    // Initialize the model with tools
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-3.5-flash',
-      systemInstruction: SYSTEM_PROMPT,
-      tools: [{ functionDeclarations: [searchFlightsFunctionDeclaration] }]
-    });
+    const FALLBACK_MODELS = [
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3-flash',
+      'gemini-2.5-flash',
+      'gemini-2-flash'
+    ];
 
-    // Start chat with history
-    const chat = model.startChat({
-      history: history,
-    });
+    let chat;
+    let result;
+    let model;
+    
+    for (const modelName of FALLBACK_MODELS) {
+      try {
+        model = genAI.getGenerativeModel({ 
+          model: modelName,
+          systemInstruction: SYSTEM_PROMPT,
+          tools: [{ functionDeclarations: [searchFlightsFunctionDeclaration] }]
+        });
 
-    // Send the user message
-    let result = await chat.sendMessage(message);
+        chat = model.startChat({
+          history: history,
+        });
+
+        result = await chat.sendMessage(message);
+        console.log(`[AI] Successfully responded using model: ${modelName}`);
+        break; 
+      } catch (err: any) {
+        console.log(`[AI] Model ${modelName} failed (likely rate limit). Trying next...`);
+      }
+    }
+
+    if (!result || !chat || !model) {
+      throw new Error('All fallback models exhausted or failed due to rate limits.');
+    }
     let response = result.response;
     
     // Check if the model wants to call a function
@@ -102,6 +123,7 @@ export const chatWithAI = async (req: Request, res: Response) => {
         console.log(`[AI Function Call] Searching live flights from ${departureAirportCode} to ${arrivalAirportCode} on ${date || 'default'}`);
         
         try {
+          console.log(`[AI] Fetching flights from getFlightsData...`);
           const flights = await getFlightsData({
             from: departureAirportCode,
             to: arrivalAirportCode,
@@ -109,41 +131,99 @@ export const chatWithAI = async (req: Request, res: Response) => {
             passengers: 1
           }, false); // isAgent = false
 
-          // Map to simpler format for AI
-          const simpleFlights = flights.map((f: any) => ({
-            airline: f.airline,
-            flightNumber: f.flightNumber,
-            departureTime: new Date(f.departureTime).toLocaleString('en-US'),
-            arrivalTime: new Date(f.arrivalTime).toLocaleString('en-US'),
-            price: f.price,
-            durationMinutes: f.durationMinutes
-          }));
+          let apiResponse: any = {};
 
-          const apiResponse = {
-            flights: simpleFlights.length > 0 ? simpleFlights : "No flights found for this route."
-          };
-
-          // Send the function response back to the model
-          result = await chat.sendMessage([{
-            functionResponse: {
-              name: 'search_flights',
-              response: apiResponse
+          if (flights && flights.length > 0) {
+            console.log(`[AI] Fetched ${flights.length} flights. Formating response...`);
+            const simpleFlights = flights.map((f: any) => ({
+              airline: f.airline,
+              flightNumber: f.flightNumber,
+              departureTime: new Date(f.departureTime).toLocaleString('en-US'),
+              arrivalTime: new Date(f.arrivalTime).toLocaleString('en-US'),
+              price: f.price,
+              durationMinutes: f.durationMinutes
+            }));
+            apiResponse.flights = simpleFlights;
+          } else {
+            console.log(`[AI] 0 flights found. Fetching nearest available dates...`);
+            const nearestFlights = await getNearestFlightsData(departureAirportCode, arrivalAirportCode);
+            if (nearestFlights && nearestFlights.length > 0) {
+              apiResponse.note = `No flights found on ${date || 'the requested date'}. But we found these nearest upcoming flights:`;
+              apiResponse.flights = nearestFlights.map((f: any) => ({
+                airline: f.airline,
+                flightNumber: f.flightNumber,
+                departureTime: new Date(f.departureTime).toLocaleString('en-US'),
+                price: f.price,
+                availableSeats: f.availableSeats
+              }));
+            } else {
+              apiResponse.flights = "No flights found for this route on any upcoming dates.";
             }
-          }]);
-          
-          response = result.response;
+          }
+
+          console.log(`[AI] Sending Function Response to chat model...`);
+          const currentHistory = await chat.getHistory();
+          const newContents = [
+            ...currentHistory,
+            {
+              role: "user",
+              parts: [
+                {
+                  functionResponse: {
+                    name: 'search_flights',
+                    response: apiResponse
+                  }
+                },
+                {
+                  text: "Please write a friendly, conversational response to the user based on these flight search results. Do not return an empty message."
+                }
+              ]
+            }
+          ];
+
+          const nextResult = await model.generateContent({ contents: newContents });
+          response = nextResult.response;
           botReply = response.text();
+          console.log(`[AI] botReply generated (length: ${botReply.length}):`, botReply);
+
+          const finalHistory = [
+            ...newContents,
+            { role: "model", parts: [{ text: botReply }] }
+          ];
+          conversationHistories.set(sid, finalHistory.slice(-40));
+          return res.json({ reply: botReply, sessionId: sid });
+
         } catch (dbError) {
           console.error('[AI DB Error]', dbError);
-          // Send error back to model
-          result = await chat.sendMessage([{
-            functionResponse: {
-              name: 'search_flights',
-              response: { error: "Database search failed temporarily." }
+          const currentHistory = await chat.getHistory();
+          const newContents = [
+            ...currentHistory,
+            {
+              role: "user",
+              parts: [
+                {
+                  functionResponse: {
+                    name: 'search_flights',
+                    response: { error: "Database search failed temporarily." }
+                  }
+                },
+                {
+                  text: "Please apologize to the user and ask them to try again later."
+                }
+              ]
             }
-          }]);
-          response = result.response;
+          ];
+          const nextResult = await model.generateContent({ contents: newContents });
+          response = nextResult.response;
           botReply = response.text();
+          console.log(`[AI] Error botReply generated:`, botReply);
+
+          const finalHistory = [
+            ...newContents,
+            { role: "model", parts: [{ text: botReply }] }
+          ];
+          conversationHistories.set(sid, finalHistory.slice(-40));
+          return res.json({ reply: botReply, sessionId: sid });
         }
       }
     }
