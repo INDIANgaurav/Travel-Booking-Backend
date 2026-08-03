@@ -6,6 +6,10 @@ export interface ITaxInvoice extends Document {
   fromDate: string;
   toDate: string;
   status: string;
+  totalBookings: number;
+  totalSalesAmount: number;
+  totalTaxes: number;
+  currency: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -16,7 +20,11 @@ const TaxInvoiceSchema = new Schema(
     product: { type: String, required: true },
     fromDate: { type: String, required: true },
     toDate: { type: String, required: true },
-    status: { type: String, enum: ['PENDING', 'GENERATED'], default: 'PENDING' },
+    status: { type: String, enum: ['PENDING', 'GENERATED', 'COMPLETED'], default: 'PENDING' },
+    totalBookings: { type: Number, default: 0 },
+    totalSalesAmount: { type: Number, default: 0 },
+    totalTaxes: { type: Number, default: 0 },
+    currency: { type: String, default: 'INR' },
   },
   { timestamps: true }
 );
