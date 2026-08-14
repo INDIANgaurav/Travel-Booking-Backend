@@ -24,7 +24,7 @@ export const requestCreditNote = async (req: Request, res: Response) => {
 export const getCreditNotes = async (req: Request, res: Response) => {
   try {
     const agentId = (req as any).user.id;
-    const creditNotes = await CreditNote.find({ agentId }).sort({ createdAt: -1 });
+    const creditNotes = await CreditNote.find({ agentId }).sort({ createdAt: -1 }).lean();
     res.status(200).json(creditNotes);
   } catch (error) {
     console.error('Error fetching credit notes:', error);

@@ -9,7 +9,7 @@ import { BankDetails } from '../agents/bankDetails.model';
 
 export const getAllOfflineBookings = async (req: Request, res: Response) => {
   try {
-    const data = await OfflineBooking.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 });
+    const data = await OfflineBooking.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
@@ -22,7 +22,7 @@ export const updateOfflineBookingStatus = async (req: Request, res: Response) =>
 
 export const getAllTaxInvoices = async (req: Request, res: Response) => {
   try {
-    const data = await TaxInvoice.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 });
+    const data = await TaxInvoice.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
@@ -35,7 +35,7 @@ export const updateTaxInvoiceStatus = async (req: Request, res: Response) => {
 
 export const getAllGstInvoices = async (req: Request, res: Response) => {
   try {
-    const data = await GstInvoice.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 });
+    const data = await GstInvoice.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
@@ -48,7 +48,7 @@ export const updateGstInvoiceStatus = async (req: Request, res: Response) => {
 
 export const getAllCreditNotes = async (req: Request, res: Response) => {
   try {
-    const data = await CreditNote.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 });
+    const data = await CreditNote.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
@@ -61,7 +61,7 @@ export const updateCreditNoteStatus = async (req: Request, res: Response) => {
 
 export const getAllDebitNotes = async (req: Request, res: Response) => {
   try {
-    const data = await DebitNote.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 });
+    const data = await DebitNote.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
@@ -74,7 +74,7 @@ export const updateDebitNoteStatus = async (req: Request, res: Response) => {
 
 export const getAllMarkups = async (req: Request, res: Response) => {
   try {
-    const data = await Markup.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 });
+    const data = await Markup.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
@@ -87,7 +87,7 @@ export const updateMarkupStatus = async (req: Request, res: Response) => {
 
 export const getAllBankDetails = async (req: Request, res: Response) => {
   try {
-    const data = await BankDetails.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 });
+    const data = await BankDetails.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };

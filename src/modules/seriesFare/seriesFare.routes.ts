@@ -14,7 +14,7 @@ import { protect } from '../../middleware/auth.middleware';
 const router = express.Router();
 
 router.route('/')
-  .get(getSeriesFares)
+  .get(protect, getSeriesFares)
   .post(protect, createSeriesFare);
 
 router.get('/summary', protect, getSupplierSummary);

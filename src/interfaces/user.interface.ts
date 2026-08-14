@@ -1,6 +1,6 @@
 import { Document } from 'mongoose';
 
-export type Role = 'SUPER_ADMIN' | 'SUB_ADMIN' | 'TRAVEL_AGENT' | 'SUPPLIER_AGENT' | 'USER';
+export type Role = 'SUPER_ADMIN' | 'SUB_ADMIN' | 'B2B_AGENT' | 'SUPPLIER_AGENT' | 'SUPPLIER_STAFF' | 'USER';
 export type Department = 'Sales' | 'Operations' | 'Customer Support' | 'Accounts' | null;
 
 export interface IUser extends Document {
@@ -12,6 +12,7 @@ export interface IUser extends Document {
   department?: Department;
   companyName?: string | null;
   companyRole?: string;
+  supplierOwnerId?: string;
   employeeSize?: string;
   gstn?: string;
   agentStatus?: 'PENDING' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE';

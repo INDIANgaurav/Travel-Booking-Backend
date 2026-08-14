@@ -55,4 +55,8 @@ const OfflineBookingSchema = new Schema(
   { timestamps: true }
 );
 
+OfflineBookingSchema.index({ agentId: 1, status: 1 });
+OfflineBookingSchema.index({ tabType: 1 });
+OfflineBookingSchema.index({ createdAt: -1 });
+
 export const OfflineBooking = mongoose.model<IOfflineBooking>('OfflineBooking', OfflineBookingSchema);

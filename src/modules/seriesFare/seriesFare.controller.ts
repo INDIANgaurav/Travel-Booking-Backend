@@ -58,10 +58,15 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getSeriesFares = async (req: Request, res: Response) => {
+export const getSeriesFares = async (req: AuthRequest, res: Response) => {
   try {
     const { origin, destination, date, airline, status } = req.query;
     const filter: any = {};
+
+    // Strict Data Isolation: ID-based linking
+    if (req.user?.role === 'SUPPLIER_AGENT' || req.user?.role === 'SUPPLIER_STAFF') {
+      filter.supplierId = req.user.role === 'SUPPLIER_STAFF' ? req.user.supplierOwnerId : req.user._id;
+    }
 
     if (origin) filter.origin = (origin as string).toUpperCase();
     if (destination) filter.destination = (destination as string).toUpperCase();
@@ -75,7 +80,7 @@ export const getSeriesFares = async (req: Request, res: Response) => {
       filter.travelDate = { $gte: startOfDay, $lte: endOfDay };
     }
 
-    const fares = await SeriesFare.find(filter).sort({ travelDate: 1, adtFare: 1 });
+    const fares = await SeriesFare.find(filter).sort({ travelDate: 1, adtFare: 1 }).lean();
     res.json(fares);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -110,7 +115,7 @@ export const deleteSeriesFare = async (req: AuthRequest, res: Response) => {
 
 export const getSupplierSummary = async (req: AuthRequest, res: Response) => {
   try {
-    const supplierId = req.user?._id;
+    const supplierId = req.user?.role === 'SUPPLIER_STAFF' ? req.user?.supplierOwnerId : req.user?._id;
     
     const faresCount = await SeriesFare.countDocuments({ supplierId, status: 'Active' });
     
@@ -125,38 +130,71 @@ export const getSupplierSummary = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const fareIds = supplierFares.map(f => f._id.toString());
     const Booking = require('../bookings/booking.model').default;
+    const mongoose = require('mongoose');
 
-    const bookings = await Booking.find({
-      type: 'FLIGHT',
-      $or: [
-        { 'details.flight_keys': { $in: fareIds.map(id => `SF_${id}`) } },
-        { 'details.flight_keys': { $in: fareIds } }
-      ]
-    }).lean();
-
-    let bookingCount = 0;
-    let bookingValue = 0;
-    let cancellationCount = 0;
-    let cancellationValue = 0;
-
-    bookings.forEach((b: any) => {
-      if (b.status === 'CANCELLED') {
-        cancellationCount += 1;
-        cancellationValue += (b.totalAmount || 0);
-      } else {
-        bookingCount += 1;
-        bookingValue += (b.totalAmount || 0);
+    const aggResult = await Booking.aggregate([
+      { $match: { type: 'FLIGHT' } },
+      { 
+         $addFields: {
+           cleanFlightKeys: {
+             $map: {
+               input: { $ifNull: ['$details.flight_keys', []] },
+               as: 'fk',
+               in: {
+                 $convert: {
+                   input: { $replaceAll: { input: '$$fk', find: 'SF_', replacement: '' } },
+                   to: 'objectId',
+                   onError: null,
+                   onNull: null
+                 }
+               }
+             }
+           }
+         }
+      },
+      {
+        $lookup: {
+          from: 'seriesfares',
+          localField: 'cleanFlightKeys',
+          foreignField: '_id',
+          as: 'seriesFares'
+        }
+      },
+      {
+        $match: {
+          'seriesFares.supplierId': new mongoose.Types.ObjectId(supplierId)
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          bookingCount: { 
+            $sum: { $cond: [{ $ne: ['$status', 'CANCELLED'] }, 1, 0] } 
+          },
+          bookingValue: { 
+            $sum: { $cond: [{ $ne: ['$status', 'CANCELLED'] }, { $ifNull: ['$totalAmount', 0] }, 0] } 
+          },
+          cancellationCount: { 
+            $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, 1, 0] } 
+          },
+          cancellationValue: { 
+            $sum: { $cond: [{ $eq: ['$status', 'CANCELLED'] }, { $ifNull: ['$totalAmount', 0] }, 0] } 
+          }
+        }
       }
-    });
+    ]);
+
+    const stats = aggResult[0] || {
+      bookingCount: 0,
+      bookingValue: 0,
+      cancellationCount: 0,
+      cancellationValue: 0
+    };
 
     res.json({
       activeFaresCount: faresCount,
-      bookingCount,
-      bookingValue,
-      cancellationCount,
-      cancellationValue
+      ...stats
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -165,50 +203,19 @@ export const getSupplierSummary = async (req: AuthRequest, res: Response) => {
 
 export const getSupplierBookingHistory = async (req: AuthRequest, res: Response) => {
   try {
-    const supplierId = req.user?._id;
+    const mongoose = require('mongoose');
+    const supplierId = req.user?.role === 'SUPPLIER_STAFF' ? req.user.supplierOwnerId : req.user?._id;
     const { refNo, pnr, airline, status, dateType, fromDate, toDate } = req.query;
 
-    // 1. Get all SeriesFare IDs belonging to this supplier
-    const supplierFares = await SeriesFare.find({ supplierId }).select('_id sfId airline origin destination flightNo travelDate departureTime arrivalTime adtFare totalSeats availableSeats').lean();
-    
-    if (!supplierFares.length) {
-      return res.json([]);
-    }
-
-    // Build a map: sfId (ObjectId string) -> fare details
-    const fareMap: Record<string, any> = {};
-    const fareIds: string[] = [];
-    supplierFares.forEach(f => {
-      const idStr = f._id.toString();
-      fareIds.push(idStr);
-      fareMap[idStr] = f;
-    });
-
-    // 2. Find bookings that reference these SeriesFare IDs in flight_keys
-    // flight_keys stores values like "SF_<objectId>" or just the objectId
     const Booking = require('../bookings/booking.model').default;
     
-    const bookingFilter: any = {
-      type: 'FLIGHT',
-      $or: [
-        { 'details.flight_keys': { $in: fareIds.map(id => `SF_${id}`) } },
-        { 'details.flight_keys': { $in: fareIds } }
-      ]
-    };
+    const bookingFilter: any = { type: 'FLIGHT' };
 
     // Apply filters
-    if (refNo) {
-      bookingFilter.bookingId = new RegExp(refNo as string, 'i');
-    }
-    if (pnr) {
-      bookingFilter['details.pnr'] = new RegExp(pnr as string, 'i');
-    }
-    if (airline && airline !== 'Select Airline') {
-      bookingFilter['details.airline'] = new RegExp(airline as string, 'i');
-    }
-    if (status && status !== 'Select Status') {
-      bookingFilter.status = (status as string).toUpperCase();
-    }
+    if (refNo) bookingFilter.bookingId = new RegExp(refNo as string, 'i');
+    if (pnr) bookingFilter['details.pnr'] = new RegExp(pnr as string, 'i');
+    if (airline && airline !== 'Select Airline') bookingFilter['details.airline'] = new RegExp(airline as string, 'i');
+    if (status && status !== 'Select Status') bookingFilter.status = (status as string).toUpperCase();
 
     // Date filtering
     if (fromDate && toDate) {
@@ -224,23 +231,83 @@ export const getSupplierBookingHistory = async (req: AuthRequest, res: Response)
       }
     }
 
-    const bookings = await Booking.find(bookingFilter)
-      .populate('user', 'name email phone')
-      .sort({ createdAt: -1 })
-      .lean();
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
 
-    // 3. Enrich bookings with series fare info
-    const enriched = bookings.map((b: any) => {
-      const sfKey = b.details?.flight_keys?.[0] || '';
-      const cleanId = sfKey.replace('SF_', '');
-      const fare = fareMap[cleanId];
-      return {
-        ...b,
-        seriesFareInfo: fare || null
-      };
+    const matchPipeline = [
+      { $match: bookingFilter },
+      { 
+         $addFields: {
+           cleanFlightKeys: {
+             $map: {
+               input: { $ifNull: ['$details.flight_keys', []] },
+               as: 'fk',
+               in: {
+                 $convert: {
+                   input: { $replaceAll: { input: '$$fk', find: 'SF_', replacement: '' } },
+                   to: 'objectId',
+                   onError: null,
+                   onNull: null
+                 }
+               }
+             }
+           }
+         }
+      },
+      {
+        $lookup: {
+          from: 'seriesfares',
+          localField: 'cleanFlightKeys',
+          foreignField: '_id',
+          as: 'seriesFares'
+        }
+      },
+      {
+        $match: {
+          'seriesFares.supplierId': new mongoose.Types.ObjectId(supplierId)
+        }
+      }
+    ];
+
+    const countResult = await Booking.aggregate([...matchPipeline, { $count: 'total' }]);
+    const totalRecords = countResult[0]?.total || 0;
+
+    const bookings = await Booking.aggregate([
+      ...matchPipeline,
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+      {
+         $addFields: {
+            seriesFareInfo: { $arrayElemAt: ['$seriesFares', 0] }
+         }
+      },
+      {
+         $project: {
+           cleanFlightKeys: 0,
+           seriesFares: 0,
+           'user.password': 0
+         }
+      },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit }
+    ]);
+
+    res.json({
+      totalRecords,
+      totalPages: Math.ceil(totalRecords / limit),
+      currentPage: page,
+      limit,
+      data: bookings
     });
-
-    res.json(enriched);
   } catch (error: any) {
     console.error('Supplier booking history error:', error);
     res.status(500).json({ message: error.message });
@@ -249,32 +316,13 @@ export const getSupplierBookingHistory = async (req: AuthRequest, res: Response)
 
 export const getSeriesFareQueue = async (req: AuthRequest, res: Response) => {
   try {
+    const mongoose = require('mongoose');
     const supplierId = req.user?._id;
     const { refNo, pnr, status, fromDate, toDate } = req.query;
 
-    const supplierFares = await SeriesFare.find({ supplierId }).select('_id sfId airline origin destination flightNo travelDate adtFare').lean();
-    
-    if (!supplierFares.length) {
-      return res.json([]);
-    }
-
-    const fareMap: Record<string, any> = {};
-    const fareIds: string[] = [];
-    supplierFares.forEach(f => {
-      const idStr = f._id.toString();
-      fareIds.push(idStr);
-      fareMap[idStr] = f;
-    });
-
     const Booking = require('../bookings/booking.model').default;
     
-    const queueFilter: any = {
-      type: 'FLIGHT',
-      $or: [
-        { 'details.flight_keys': { $in: fareIds.map(id => `SF_${id}`) } },
-        { 'details.flight_keys': { $in: fareIds } }
-      ]
-    };
+    const queueFilter: any = { type: 'FLIGHT' };
 
     if (refNo) queueFilter.bookingId = new RegExp(refNo as string, 'i');
     if (pnr) queueFilter['details.pnr'] = new RegExp(pnr as string, 'i');
@@ -289,21 +337,83 @@ export const getSeriesFareQueue = async (req: AuthRequest, res: Response) => {
       queueFilter.createdAt = { $gte: from, $lte: to };
     }
 
-    const queueItems = await Booking.find(queueFilter)
-      .populate('user', 'name companyName email phone')
-      .sort({ createdAt: -1 })
-      .lean();
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
 
-    const enriched = queueItems.map((b: any) => {
-      const sfKey = b.details?.flight_keys?.[0] || '';
-      const cleanId = sfKey.replace('SF_', '');
-      return {
-        ...b,
-        seriesFareInfo: fareMap[cleanId] || null
-      };
+    const matchPipeline = [
+      { $match: queueFilter },
+      { 
+         $addFields: {
+           cleanFlightKeys: {
+             $map: {
+               input: { $ifNull: ['$details.flight_keys', []] },
+               as: 'fk',
+               in: {
+                 $convert: {
+                   input: { $replaceAll: { input: '$$fk', find: 'SF_', replacement: '' } },
+                   to: 'objectId',
+                   onError: null,
+                   onNull: null
+                 }
+               }
+             }
+           }
+         }
+      },
+      {
+        $lookup: {
+          from: 'seriesfares',
+          localField: 'cleanFlightKeys',
+          foreignField: '_id',
+          as: 'seriesFares'
+        }
+      },
+      {
+        $match: {
+          'seriesFares.supplierId': new mongoose.Types.ObjectId(supplierId)
+        }
+      }
+    ];
+
+    const countResult = await Booking.aggregate([...matchPipeline, { $count: 'total' }]);
+    const totalRecords = countResult[0]?.total || 0;
+
+    const queueItems = await Booking.aggregate([
+      ...matchPipeline,
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+      {
+         $addFields: {
+            seriesFareInfo: { $arrayElemAt: ['$seriesFares', 0] }
+         }
+      },
+      {
+         $project: {
+           cleanFlightKeys: 0,
+           seriesFares: 0,
+           'user.password': 0
+         }
+      },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit }
+    ]);
+
+    res.json({
+      totalRecords,
+      totalPages: Math.ceil(totalRecords / limit),
+      currentPage: page,
+      limit,
+      data: queueItems
     });
-
-    res.json(enriched);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

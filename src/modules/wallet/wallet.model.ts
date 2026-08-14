@@ -23,6 +23,12 @@ export interface ITransaction extends Document {
   penalty?: number;
   promoAmount?: number;
   netAmountDebited?: number;
+  
+  // Razorpay Specific Fields
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  razorpaySignature?: string;
+  surcharge?: number;
 }
 
 const transactionSchema = new Schema<ITransaction>(
@@ -49,8 +55,20 @@ const transactionSchema = new Schema<ITransaction>(
     penalty: { type: Number, default: 0 },
     promoAmount: { type: Number, default: 0 },
     netAmountDebited: { type: Number, default: 0 },
+    
+    // Razorpay Specific Fields
+    razorpayOrderId: { type: String },
+    razorpayPaymentId: { type: String },
+    razorpaySignature: { type: String },
+    surcharge: { type: Number, default: 0 },
   }
 );
+
+transactionSchema.index({ user: 1, date: -1 });
+transactionSchema.index({ referenceNo: 1 });
+transactionSchema.index({ type: 1 });
+transactionSchema.index({ pnr: 1 });
+transactionSchema.index({ date: -1 });
 
 const Transaction = mongoose.model<ITransaction>('Transaction', transactionSchema);
 export default Transaction;

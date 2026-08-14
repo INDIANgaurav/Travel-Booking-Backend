@@ -5,7 +5,7 @@ import Destination from '../tours/destination.model';
  
 export const getCMSDestinations = async (req: Request, res: Response) => {
   try {
-    const destinations = await Destination.find({ isActive: true }).limit(6);
+    const destinations = await Destination.find({ isActive: true }).limit(6).lean();
     
     // Mapping to match the UI spec requested
     const formattedDestinations = destinations.map(d => ({
@@ -23,7 +23,7 @@ export const getCMSDestinations = async (req: Request, res: Response) => {
  
 export const getOffers = async (req: Request, res: Response) => {
   try {
-    const offers = await Offer.find({ isActive: true }).limit(5);
+    const offers = await Offer.find({ isActive: true }).limit(5).lean();
 
     // If empty, return a dummy one to satisfy UI spec
     if (offers.length === 0) {

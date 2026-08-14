@@ -23,7 +23,7 @@ const userSchema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ['SUPER_ADMIN', 'SUB_ADMIN', 'TRAVEL_AGENT', 'SUPPLIER_AGENT', 'USER'],
+      enum: ['SUPER_ADMIN', 'SUB_ADMIN', 'B2B_AGENT', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF', 'USER'],
       default: 'USER',
     },
     department: {
@@ -35,6 +35,11 @@ const userSchema = new Schema<IUser>(
       type: String,
     },
     companyRole: { type: String },
+    supplierOwnerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
     employeeSize: { type: String },
     gstn: { type: String },
     agentStatus: {
@@ -100,6 +105,11 @@ const userSchema = new Schema<IUser>(
     timestamps: true,
   }
 );
+
+userSchema.index({ role: 1 });
+userSchema.index({ agentStatus: 1 });
+userSchema.index({ isActive: 1 });
+userSchema.index({ supplierOwnerId: 1 });
 
 userSchema.pre('save', async function () {
   if (!this.isModified('password') || !this.password) {

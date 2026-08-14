@@ -6,7 +6,7 @@ import { authorizeRoles } from '../../middleware/rbac.middleware';
 const router = express.Router();
 
 router.use(protect);
-router.use(authorizeRoles('TRAVEL_AGENT')); // Only travel agents can access these routes
+router.use(authorizeRoles('B2B_AGENT')); // Only travel agents can access these routes
 
 router.route('/profile').post(manageAgentProfile);
 router.get('/wallet', getAgentWallet);

@@ -8,7 +8,8 @@ import {
   submitAgentOnboarding,
   getSupplierStaff,
   addSupplierStaff,
-  updateSupplierStaff 
+  updateSupplierStaff,
+  deleteSupplierStaff
 } from './user.controller';
 import { protect } from '../../middleware/auth.middleware';
 
@@ -32,6 +33,8 @@ router.put('/agent/onboarding', submitAgentOnboarding);
 router.route('/supplier-staff')
   .get(getSupplierStaff)
   .post(addSupplierStaff);
-router.put('/supplier-staff/:id', updateSupplierStaff);
+router.route('/supplier-staff/:id')
+  .put(updateSupplierStaff)
+  .delete(deleteSupplierStaff);
 
 export default router;

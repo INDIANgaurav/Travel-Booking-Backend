@@ -22,7 +22,7 @@ export const submitOfflineBooking = async (req: Request, res: Response) => {
 export const getOfflineBookings = async (req: Request, res: Response) => {
   try {
     const agentId = (req as any).user.id;
-    const bookings = await OfflineBooking.find({ agentId }).sort({ createdAt: -1 });
+    const bookings = await OfflineBooking.find({ agentId }).sort({ createdAt: -1 }).lean();
     res.status(200).json(bookings);
   } catch (error) {
     console.error('Error fetching offline bookings:', error);

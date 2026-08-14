@@ -24,7 +24,7 @@ export const registerUser = async (req: Request, res: Response) => {
     }
 
     let agentStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE' | undefined = undefined;
-    if (role === 'TRAVEL_AGENT') {
+    if (role === 'B2B_AGENT') {
       agentStatus = 'PENDING';
     }
 
@@ -35,7 +35,7 @@ export const registerUser = async (req: Request, res: Response) => {
       password,
       role: role || 'USER',
       department: role === 'SUB_ADMIN' ? department : null,
-      companyName: role === 'TRAVEL_AGENT' ? companyName : null,
+      companyName: role === 'B2B_AGENT' ? companyName : null,
       agentStatus
     });
 
@@ -130,7 +130,7 @@ export const loginUser = async (req: Request, res: Response) => {
         return res.status(401).json({ message: 'Account has been deactivated', status: 'INACTIVE' });
       }
 
-      if ((user.role === 'TRAVEL_AGENT' || user.role === 'SUPPLIER_AGENT') && user.agentStatus !== 'APPROVED') {
+      if ((user.role === 'B2B_AGENT' || user.role === 'SUPPLIER_AGENT') && user.agentStatus !== 'APPROVED') {
         return res.status(401).json({ 
           message: 'Your registration is pending approval from Admin.', 
           status: user.agentStatus || 'PENDING_APPROVAL' 
@@ -143,6 +143,8 @@ export const loginUser = async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         department: user.department,
+        companyName: user.companyName,
+        supplierOwnerId: user.supplierOwnerId,
         token: generateToken(user.id),
       });
     } else {
@@ -177,13 +179,13 @@ export const googleAuth = async (req: Request, res: Response) => {
     let user = await User.findOne({ email });
 
     if (user) {
-      if (role === 'TRAVEL_AGENT' && user.role !== 'TRAVEL_AGENT') {
+      if (role === 'B2B_AGENT' && user.role !== 'B2B_AGENT') {
         return res.status(400).json({ message: 'This Google account is already registered as a standard User. Please use a different email to register as an Agent.' });
       }
     } else {
       // Create a new user if they don't exist
       let agentStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE' | undefined = undefined;
-      if (role === 'TRAVEL_AGENT') {
+      if (role === 'B2B_AGENT') {
         agentStatus = 'PENDING';
       }
 
@@ -201,7 +203,7 @@ export const googleAuth = async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Account has been deactivated', status: 'INACTIVE' });
     }
 
-    if (user.role === 'TRAVEL_AGENT' && user.agentStatus !== 'APPROVED') {
+    if (user.role === 'B2B_AGENT' && user.agentStatus !== 'APPROVED') {
       return res.status(401).json({ message: 'Agent account pending approval', status: 'PENDING' });
     }
 

@@ -55,5 +55,11 @@ const seriesFareSchema = new Schema<ISeriesFare>(
   { timestamps: true }
 );
 
+seriesFareSchema.index({ origin: 1, destination: 1 });
+seriesFareSchema.index({ travelDate: 1 });
+seriesFareSchema.index({ supplierId: 1, status: 1 });
+seriesFareSchema.index({ airline: 1 });
+seriesFareSchema.index({ status: 1 });
+
 const SeriesFare = mongoose.model<ISeriesFare>('SeriesFare', seriesFareSchema);
 export default SeriesFare;

@@ -7,29 +7,17 @@ export const getManageBookings = async (req: AuthRequest, res: Response) => {
     const agentId = req.user?._id;
     const userRole = req.user?.role;
     const { product, searchType, status, fromDate, toDate, month, year, searchOption, searchValue } = req.query;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
 
     const query: any = {};
     
-    if (userRole === 'USER' || userRole === 'TRAVEL_AGENT') {
+    if (userRole === 'USER' || userRole === 'B2B_AGENT') {
       // Users and Travel Agents see only bookings they created
       query.user = agentId;
     } else if (userRole === 'SUPPLIER_AGENT') {
-      // Suppliers see bookings made against their inventory OR bookings they created themselves
-      const SeriesFare = require('../seriesFare/seriesFare.model').default;
-      const supplierFares = await SeriesFare.find({ supplierId: agentId }).select('_id').lean();
-      
-      const fareIds = supplierFares.map((f: any) => f._id.toString());
-      
-      if (fareIds.length > 0) {
-        query.$or = [
-          { user: agentId }, // Their own bookings (like Nexus API flights they booked)
-          { 'details.flight_keys': { $in: fareIds.map((id: string) => `SF_${id}`) } },
-          { 'details.flight_keys': { $in: fareIds } }
-        ];
-      } else {
-        // If they have no inventory, they can still see their own bookings
-        query.user = agentId;
-      }
+      // Logic moved to aggregation pipeline below
     }
 
     if (product) {
@@ -81,10 +69,81 @@ export const getManageBookings = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    const bookings = await Booking.find(query).sort({ createdAt: -1 });
+    let bookings = [];
+    let totalRecords = 0;
+
+    if (userRole === 'SUPPLIER_AGENT') {
+      const mongoose = require('mongoose');
+      
+      const matchPipeline = [
+        { $match: query },
+        { 
+           $addFields: {
+             cleanFlightKeys: {
+               $map: {
+                 input: { $ifNull: ['$details.flight_keys', []] },
+                 as: 'fk',
+                 in: {
+                   $convert: {
+                     input: { $replaceAll: { input: '$$fk', find: 'SF_', replacement: '' } },
+                     to: 'objectId',
+                     onError: null,
+                     onNull: null
+                   }
+                 }
+               }
+             }
+           }
+        },
+        {
+          $lookup: {
+            from: 'seriesfares',
+            localField: 'cleanFlightKeys',
+            foreignField: '_id',
+            as: 'seriesFares'
+          }
+        },
+        {
+          $match: {
+            $or: [
+              { user: new mongoose.Types.ObjectId(agentId) },
+              { 'seriesFares.supplierId': new mongoose.Types.ObjectId(agentId) }
+            ]
+          }
+        }
+      ];
+
+      // Get Total Count
+      const countResult = await Booking.aggregate([...matchPipeline, { $count: 'total' }]);
+      totalRecords = countResult[0]?.total || 0;
+
+      // Get Paginated Data
+      bookings = await Booking.aggregate([
+        ...matchPipeline,
+        {
+           $project: {
+             cleanFlightKeys: 0,
+             seriesFares: 0
+           }
+        },
+        { $sort: { createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limit }
+      ]);
+    } else {
+      totalRecords = await Booking.countDocuments(query);
+      bookings = await Booking.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+    }
 
     res.status(200).json({
-      totalRecords: bookings.length,
+      totalRecords,
+      totalPages: Math.ceil(totalRecords / limit),
+      currentPage: page,
+      limit,
       data: bookings
     });
   } catch (error) {

@@ -32,4 +32,5 @@ const hotelSchema = new Schema<IHotel>({
   timestamps: true
 });
 
+hotelSchema.index({ city: 1, state: 1, status: 1 });
 export default mongoose.model<IHotel>('Hotel', hotelSchema);

@@ -4,11 +4,12 @@ export interface IBooking extends Document {
   user: mongoose.Types.ObjectId;
   bookingId: string;
   type: 'FLIGHT' | 'HOTEL' | 'PACKAGE' | 'BUS';
-  status: 'CONFIRMED' | 'PENDING' | 'CANCELLED';
+  status: 'INITIATED' | 'PAYMENT_PENDING' | 'TICKETING_IN_PROGRESS' | 'CONFIRMED' | 'FAILED_REFUNDING' | 'FAILED' | 'CANCELLED';
+  idempotencyKey?: string;
   totalAmount: number;
   date: string;
   bookingMode: 'PERSONAL' | 'MYBIZ';
-  
+  paymentMethod?: 'RAZORPAY' | 'WALLET';  
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   razorpaySignature?: string;
@@ -53,8 +54,10 @@ const bookingSchema = new Schema<IBooking>(
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     bookingId: { type: String, required: true, unique: true },
     type: { type: String, enum: ['FLIGHT', 'HOTEL', 'PACKAGE', 'BUS'], required: true },
-    status: { type: String, enum: ['CONFIRMED', 'PENDING', 'CANCELLED'], default: 'PENDING' },
+    status: { type: String, enum: ['INITIATED', 'PAYMENT_PENDING', 'TICKETING_IN_PROGRESS', 'CONFIRMED', 'FAILED_REFUNDING', 'FAILED', 'CANCELLED'], default: 'INITIATED' },
+    idempotencyKey: { type: String, sparse: true, unique: true },
     bookingMode: { type: String, enum: ['PERSONAL', 'MYBIZ'], default: 'PERSONAL' },
+    paymentMethod: { type: String, enum: ['RAZORPAY', 'WALLET'], default: 'RAZORPAY' },
     totalAmount: { type: Number, required: true },
     date: { type: String, required: true },
     
@@ -106,6 +109,13 @@ const bookingSchema = new Schema<IBooking>(
     timestamps: true,
   }
 );
+
+bookingSchema.index({ user: 1, createdAt: -1 });
+bookingSchema.index({ status: 1 });
+bookingSchema.index({ type: 1 });
+bookingSchema.index({ 'details.pnr': 1 });
+bookingSchema.index({ 'details.flight_keys': 1 });
+bookingSchema.index({ createdAt: -1 });
 
 const Booking = mongoose.model<IBooking>('Booking', bookingSchema);
 export default Booking;

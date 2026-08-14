@@ -21,7 +21,7 @@ export const requestTaxInvoice = async (req: Request, res: Response) => {
       status: 'CONFIRMED',
       type: bookingType,
       createdAt: { $gte: start, $lte: end }
-    });
+    }).lean();
 
     let totalBookings = bookings.length;
     let totalSalesAmount = 0;
@@ -56,7 +56,7 @@ export const requestTaxInvoice = async (req: Request, res: Response) => {
 export const getTaxInvoices = async (req: Request, res: Response) => {
   try {
     const agentId = (req as any).user.id;
-    const invoices = await TaxInvoice.find({ agentId }).sort({ createdAt: -1 });
+    const invoices = await TaxInvoice.find({ agentId }).sort({ createdAt: -1 }).lean();
     res.status(200).json(invoices);
   } catch (error) {
     console.error('Error fetching tax invoices:', error);

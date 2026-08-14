@@ -8,8 +8,24 @@ export const getUsers = async (req: Request, res: Response) => {
       filter.role = req.query.role;
     }
     
-    const users = await User.find(filter).select('-password');
-    res.json(users);
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
+
+    const totalRecords = await User.countDocuments(filter);
+    const users = await User.find(filter)
+      .select('-password')
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    res.json({
+      totalRecords,
+      totalPages: Math.ceil(totalRecords / limit),
+      currentPage: page,
+      limit,
+      data: users
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -19,10 +35,27 @@ import Booking from '../bookings/booking.model';
 
 export const getAllBookings = async (req: Request, res: Response) => {
   try {
-    const bookings = await Booking.find({})
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    const totalRecords = await Booking.countDocuments(filter);
+
+    const bookings = await Booking.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .populate('user', 'name email phone')
-      .sort({ createdAt: -1 });
-    res.json(bookings);
+      .lean();
+
+    res.json({
+      totalRecords,
+      totalPages: Math.ceil(totalRecords / limit),
+      currentPage: page,
+      limit,
+      data: bookings
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message || 'Failed to fetch bookings' });
   }
@@ -34,7 +67,7 @@ export const approveAgent = async (req: Request, res: Response) => {
     const { status } = req.body; // 'APPROVED' | 'REJECTED'
     const agent = await User.findById(agentId);
 
-    if (!agent || agent.role !== 'TRAVEL_AGENT') {
+    if (!agent || agent.role !== 'B2B_AGENT') {
       return res.status(404).json({ message: 'Agent not found' });
     }
 
@@ -137,7 +170,7 @@ export const createAgent = async (req: Request, res: Response) => {
       email,
       phone,
       password,
-      role: 'TRAVEL_AGENT',
+      role: 'B2B_AGENT',
       companyName,
       isApproved: true,
       isEmailVerified: true,

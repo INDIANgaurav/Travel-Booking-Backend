@@ -41,11 +41,14 @@ export const searchHotels = async (req: Request, res: Response) => {
 
     const searchCity = (city as string).trim();
 
+    // Exact match using the new compound index (requires frontend to send exact case, or store normalized)
+    // For MVP, we will use a case-insensitive regex but anchored to the start, which CAN use an index.
+    const regexPattern = new RegExp('^' + searchCity, 'i');
     const localHotels = await Hotel.find({
       status: 'APPROVED',
       $or: [
-        { city: { $regex: new RegExp(searchCity, 'i') } },
-        { state: { $regex: new RegExp(searchCity, 'i') } }
+        { city: regexPattern },
+        { state: regexPattern }
       ]
     }).lean();
 
@@ -95,7 +98,7 @@ export const getMyProperties = async (req: AuthRequest, res: Response) => {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const properties = await Hotel.find({ ownerId: userId }).sort({ createdAt: -1 });
+    const properties = await Hotel.find({ ownerId: userId }).sort({ createdAt: -1 }).lean();
     return res.status(200).json(properties);
   } catch (error) {
     console.error("Error fetching user properties:", error);
@@ -143,7 +146,7 @@ export const deleteMyProperty = async (req: AuthRequest, res: Response) => {
 // 6. Get All Properties (For Admin/SubAdmin)
 export const getAllProperties = async (req: Request, res: Response) => {
   try {
-    const properties = await Hotel.find().populate('ownerId', 'name email').sort({ createdAt: -1 });
+    const properties = await Hotel.find().populate('ownerId', 'name email').sort({ createdAt: -1 }).lean();
     return res.status(200).json(properties);
   } catch (error) {
     console.error("Error fetching all properties:", error);

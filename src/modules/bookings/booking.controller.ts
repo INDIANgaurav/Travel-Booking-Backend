@@ -6,46 +6,268 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import { bookFlight } from '../flights/nexusdmc.service';
 import SeriesFare from '../seriesFare/seriesFare.model';
+import User from '../users/user.model';
+import Transaction from '../wallet/wallet.model';
 
 export const getMyBookings = async (req: AuthRequest, res: Response) => {
   try {
-    const bookings = await Booking.find({ user: req.user._id }).sort({ createdAt: -1 });
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
 
-    res.json(bookings);
+    const bookings = await Booking.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    
+    const totalRecords = await Booking.countDocuments({ user: req.user._id });
+
+    res.json({
+      bookings,
+      currentPage: page,
+      totalPages: Math.ceil(totalRecords / limit),
+      totalRecords
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
 export const createFlightBooking = async (req: AuthRequest, res: Response) => {
+  let session;
   try {
-    const { totalAmount, details, date, bookingMode = 'PERSONAL' } = req.body;
+    const { totalAmount, details, date, bookingMode = 'PERSONAL', paymentMethod = 'RAZORPAY', idempotencyKey } = req.body;
+
+    if (!totalAmount || totalAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid total amount' });
+    }
+
+    if (paymentMethod === 'WALLET') {
+      const mongoose = require('mongoose');
+      session = await mongoose.startSession();
+      session.startTransaction();
+
+      // Check for Idempotency Key in session to prevent duplicate double-charges
+      if (idempotencyKey) {
+        const existingBooking = await Booking.findOne({ idempotencyKey }).session(session);
+        if (existingBooking) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(409).json({ message: 'Duplicate booking request detected', booking: existingBooking });
+        }
+      }
+
+      const user = await User.findOneAndUpdate(
+        { _id: req.user._id, walletBalance: { $gte: totalAmount } },
+        { $inc: { walletBalance: -totalAmount } },
+        { session, new: true }
+      );
+
+      if (!user) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({ message: 'Insufficient wallet balance' });
+      }
+
+      const newBooking = new Booking({
+        user: req.user._id,
+        bookingId: `BKG-FL-${Math.floor(Math.random() * 1000000)}`,
+        type: 'FLIGHT',
+        bookingMode,
+        paymentMethod,
+        status: 'TICKETING_IN_PROGRESS',
+        totalAmount,
+        date,
+        details,
+        idempotencyKey
+      });
+
+      await newBooking.save({ session });
+
+      await Transaction.create([{
+        user: req.user._id,
+        type: 'DEBIT',
+        amount: totalAmount,
+        description: `Flight Booking Debit: ${newBooking.bookingId}`,
+        paymentMethod: 'WALLET',
+        pnr: newBooking.bookingId
+      }], { session });
+
+      await session.commitTransaction();
+      session.endSession();
+      session = undefined; // clear session so we don't abort it in generic catch
+
+      let apiBookingFailed = false;
+
+      // 1. If it's a NexusDMC flight
+      if (details && !details.isSeriesFare) {
+        try {
+          const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
+          
+          const paxes = (passengers || []).map((p: any) => {
+            const isChildOrInfant = p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT';
+            let finalTitle = p.title || (p.gender === 'Male' ? (isChildOrInfant ? 'Mstr' : 'Mr') : (isChildOrInfant ? 'Miss' : 'Ms'));
+            let upperTitle = finalTitle.toUpperCase();
+            if (isChildOrInfant) {
+              if (upperTitle === 'MR' || upperTitle === 'MSTR') finalTitle = 'Mstr';
+              else if (upperTitle === 'MS' || upperTitle === 'MRS' || upperTitle === 'MISS') finalTitle = 'Miss';
+              else finalTitle = 'Mstr';
+            } else {
+              if (upperTitle === 'MSTR' || upperTitle === 'MR') finalTitle = 'Mr';
+              else if (upperTitle === 'MISS' || upperTitle === 'MS') finalTitle = 'Ms';
+              else if (upperTitle === 'MRS') finalTitle = 'Mrs';
+              else finalTitle = 'Mr';
+            }
+            let defaultDob = '1990-01-01';
+            if (p.type?.toUpperCase() === 'CHILD') defaultDob = '2018-01-01'; 
+            if (p.type?.toUpperCase() === 'INFANT') defaultDob = '2025-01-01'; 
+            
+            return {
+              title: finalTitle,
+              first_name: p.name.split(' ')[0] || 'Unknown',
+              last_name: p.name.split(' ').slice(1).join(' ') || 'User',
+              dob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : defaultDob,
+              passport_num: p.passportNum || null,
+              passport_expiry_date: p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0] : null,
+              nationality: p.nationality || 'IN',
+              type: isChildOrInfant ? (p.type?.toUpperCase() === 'CHILD' ? 'child' : 'infant') : 'adult'
+            };
+          });
+
+          const client_details = {
+            email: contactDetails?.email || '',
+            phone: contactDetails?.phone || ''
+          };
+
+          const agent_reference = newBooking.bookingId.replace(/-/g, '');
+          const bookResult = await bookFlight(nexus_query, flight_keys, total_price, currency, paxes, client_details, agent_reference);
+          
+          if (bookResult && bookResult.success) {
+            details.pnr = bookResult.response_ref; 
+            details.nexus_response = bookResult;
+            newBooking.details = details;
+            newBooking.status = 'CONFIRMED';
+          } else {
+            apiBookingFailed = true;
+            details.api_error = bookResult?.error_msg || 'Nexus returned false success';
+            newBooking.details = details;
+          }
+        } catch (nexusError: any) {
+          console.error('NexusDMC Booking failed for Wallet payment:', nexusError);
+          apiBookingFailed = true;
+          details.api_error = nexusError.message || 'Exception during Nexus booking';
+          newBooking.details = details;
+        }
+      } 
+      // 2. If it's a SeriesFare flight
+      else if (details && details.isSeriesFare && details.flight_keys && details.flight_keys.length > 0) {
+        try {
+          const sfId = details.flight_keys[0];
+          const passengers = details.passengers || [];
+          let seatCount = 0;
+          if (passengers.length > 0) {
+             seatCount = passengers.filter((p: any) => p.type?.toUpperCase() !== 'INFANT' || p.needsSeat).length;
+          } else if (details.seats && Array.isArray(details.seats)) {
+             seatCount = details.seats.length;
+          }
+          if (seatCount === 0) seatCount = 1;
+
+          const sfIdClean = sfId.replace('SF_', '');
+          const mongooseSF = require('mongoose');
+          if (mongooseSF.Types.ObjectId.isValid(sfIdClean)) {
+            const seriesFare = await SeriesFare.findById(sfIdClean);
+            if (seriesFare) {
+               seriesFare.availableSeats = Math.max(0, seriesFare.availableSeats - seatCount);
+               if (seriesFare.availableSeats === 0) {
+                   seriesFare.status = 'SoldOut';
+               }
+               await seriesFare.save();
+               
+               details.pnr = seriesFare.airlinePnr || 'PENDING';
+               newBooking.details = details;
+               newBooking.status = 'CONFIRMED';
+            }
+          }
+        } catch (sfError) {
+          console.error('Failed to decrement SeriesFare seats for Wallet payment:', sfError);
+          apiBookingFailed = true;
+          details.api_error = 'Failed to book series fare seats';
+          newBooking.details = details;
+        }
+      }
+
+      if (apiBookingFailed) {
+        newBooking.status = 'FAILED_REFUNDING';
+        await newBooking.save();
+
+        // Rollback Wallet Deduction via new transaction
+        const refundSession = await mongoose.startSession();
+        refundSession.startTransaction();
+        try {
+          await User.findByIdAndUpdate(req.user._id, { $inc: { walletBalance: totalAmount } }, { session: refundSession });
+          await Transaction.create([{
+            user: req.user._id, 
+            type: 'CREDIT', 
+            amount: totalAmount,
+            description: `Refund for failed Flight Booking: ${newBooking.bookingId}`, 
+            paymentMethod: 'WALLET',
+            pnr: newBooking.bookingId
+          }], { session: refundSession });
+          
+          newBooking.status = 'FAILED';
+          newBooking.cancellationReason = 'Flight Booking API Failed - Auto Refunded';
+          newBooking.refundAmount = totalAmount;
+          newBooking.refundStatus = 'COMPLETED';
+          await newBooking.save({ session: refundSession });
+
+          await refundSession.commitTransaction();
+        } catch (refundError) {
+          await refundSession.abortTransaction();
+          console.error("Critical Refund Failure:", refundError);
+        } finally {
+          refundSession.endSession();
+        }
+        
+        return res.status(200).json({ 
+          booking: newBooking, 
+          apiFailed: true,
+          message: 'Payment successful but ticketing failed. Full refund has been initiated to Wallet.' 
+        });
+      }
+
+      await newBooking.save();
+
+      return res.status(201).json({
+        booking: newBooking,
+        message: 'Booking confirmed using wallet balance'
+      });
+    }
 
     const razorpay = new Razorpay({
       key_id: process.env.RAZORPAY_KEY_ID || '',
       key_secret: process.env.RAZORPAY_KEY_SECRET || '',
     });
 
-    // 1. Create Razorpay Order
     const options = {
-      amount: totalAmount * 100, // amount in smallest currency unit (paise)
+      amount: totalAmount * 100, 
       currency: "INR",
       receipt: `receipt_${Date.now()}`
     };
     
     const order = await razorpay.orders.create(options);
 
-    // 2. Create Booking in DB (Status: PENDING)
     const newBooking = new Booking({
       user: req.user._id,
       bookingId: `BKG-FL-${Math.floor(Math.random() * 1000000)}`,
       type: 'FLIGHT',
       bookingMode,
-      status: 'PENDING',
+      status: 'PAYMENT_PENDING',
       totalAmount,
       date,
       details,
-      razorpayOrderId: order.id
+      razorpayOrderId: order.id,
+      idempotencyKey
     });
 
     await newBooking.save();
@@ -58,14 +280,60 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
     });
 
   } catch (error: any) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
     console.error('Error creating flight booking:', error);
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.idempotencyKey) {
+       return res.status(409).json({ message: 'Duplicate booking request detected' });
+    }
     res.status(500).json({ message: 'Failed to create flight booking and order' });
   }
 };
 
 export const createHotelBooking = async (req: AuthRequest, res: Response) => {
   try {
-    const { totalAmount, details, date, bookingMode = 'PERSONAL' } = req.body;
+    const { totalAmount, details, date, bookingMode = 'PERSONAL', paymentMethod = 'RAZORPAY' } = req.body;
+
+    if (paymentMethod === 'WALLET') {
+      const user = await User.findOneAndUpdate(
+        { _id: req.user._id, walletBalance: { $gte: totalAmount } },
+        { $inc: { walletBalance: -totalAmount } },
+        { new: true }
+      );
+
+      if (!user) {
+        return res.status(400).json({ message: 'Insufficient wallet balance' });
+      }
+
+      const newBooking = new Booking({
+        user: req.user._id,
+        bookingId: `HTL-${Math.floor(Math.random() * 1000000)}`,
+        type: 'HOTEL',
+        bookingMode,
+        paymentMethod,
+        status: 'TICKETING_IN_PROGRESS',
+        totalAmount,
+        date,
+        details,
+      });
+
+      await newBooking.save();
+
+      await Transaction.create({
+        user: req.user._id,
+        type: 'DEBIT',
+        amount: totalAmount,
+        description: `Hotel Booking Debit: ${newBooking.bookingId}`,
+        paymentMethod: 'WALLET',
+      });
+
+      return res.status(201).json({
+        booking: newBooking,
+        message: 'Booking confirmed using wallet balance'
+      });
+    }
 
     const razorpay = new Razorpay({
       key_id: process.env.RAZORPAY_KEY_ID || '',
@@ -85,7 +353,7 @@ export const createHotelBooking = async (req: AuthRequest, res: Response) => {
       bookingId: `HTL-${Math.floor(Math.random() * 1000000)}`,
       type: 'HOTEL',
       bookingMode,
-      status: 'PENDING',
+      status: 'PAYMENT_PENDING',
       totalAmount,
       date,
       details,
@@ -131,7 +399,7 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
       // If it's a flight, call NexusDMC Book API
       const details = booking.details as any;
       let apiBookingFailed = false;
-      if (booking.type === 'FLIGHT' && details && details.nexus_query) {
+      if (booking.type === 'FLIGHT' && details && !details.isSeriesFare) {
         try {
           const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
           
@@ -199,7 +467,7 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
           booking.details = details;
           booking.markModified('details');
         }
-      } else if (booking.type === 'FLIGHT' && details && details.flight_keys && details.flight_keys.length > 0) {
+      } else if (booking.type === 'FLIGHT' && details && details.isSeriesFare && details.flight_keys && details.flight_keys.length > 0) {
         try {
           const sfId = details.flight_keys[0];
           const passengers = details.passengers || [];
@@ -307,7 +575,7 @@ export const getCancellationPreview = async (req: AuthRequest, res: Response) =>
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    if (booking.status !== 'CONFIRMED' && booking.status !== 'PENDING') {
+    if (!['CONFIRMED', 'PAYMENT_PENDING', 'INITIATED', 'TICKETING_IN_PROGRESS'].includes(booking.status)) {
       return res.status(400).json({ message: 'Booking cannot be cancelled' });
     }
 
@@ -361,7 +629,7 @@ export const cancelBooking = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    if (booking.status !== 'CONFIRMED' && booking.status !== 'PENDING') {
+    if (!['CONFIRMED', 'PAYMENT_PENDING', 'INITIATED', 'TICKETING_IN_PROGRESS'].includes(booking.status)) {
       return res.status(400).json({ message: 'Booking is already cancelled or cannot be cancelled' });
     }
 

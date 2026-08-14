@@ -6,9 +6,7 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "nodemon --exec ts-node src/server.ts",
-    "build": "tsc && node -e \"console.log('✅ Build Completed Successfully!')\"",
-    "seed:admin": "ts-node src/scripts/seedAdmin.ts",
-    "seed:data": "ts-node src/scripts/seedData.ts"
+    "build": "tsc && node -e \"console.log('✅ Build Completed Successfully!')\""
   },
   "keywords": [],
   "author": "",
@@ -23,6 +21,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
     "firebase-admin": "^14.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.7.3",

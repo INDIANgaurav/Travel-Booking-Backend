@@ -28,7 +28,7 @@ export const createMarkup = async (req: Request, res: Response) => {
 export const getMarkups = async (req: Request, res: Response) => {
   try {
     const agentId = (req as any).user.id;
-    const markups = await Markup.find({ agentId }).sort({ createdAt: -1 });
+    const markups = await Markup.find({ agentId }).sort({ createdAt: -1 }).lean();
     res.status(200).json(markups);
   } catch (error) {
     console.error('Error fetching markups:', error);

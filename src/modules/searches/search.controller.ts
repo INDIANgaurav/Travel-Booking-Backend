@@ -13,7 +13,7 @@ import { Request } from 'express';
 // @access  Private
 export const getRecentSearches = async (req: AuthRequest, res: Response) => {
   try {
-    const searches = await RecentSearch.find({ user: req.user._id })
+    const searches = await RecentSearch.find({ user: req.user._id }).lean()
       .sort({ createdAt: -1 })
       .limit(5);
 
@@ -172,7 +172,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
         travelDate: { $gte: startOfDay, $lte: endOfDay }
       };
 
-      const seriesFares = await SeriesFare.find(sfFilter);
+      const seriesFares = await SeriesFare.find(sfFilter).lean();
       const sfMapped = seriesFares.map((sf: any) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
         const depTime = `${dateStr}T${sf.departureTime}:00`;
@@ -284,7 +284,7 @@ export const getNearestFlightsData = async (from: string, to: string) => {
       travelDate: { $gte: startOfDay }
     };
 
-    const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(5);
+    const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(5).lean();
     
     const sfMapped = seriesFares.map((sf: any) => {
       const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
@@ -382,7 +382,7 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
         const token = req.headers.authorization.split(' ')[1];
         const decoded: any = jwt.verify(token, process.env.JWT_SECRET || '');
         const user = await User.findById(decoded.id).select('role agentStatus');
-        if (user && (user.role === 'SUPER_ADMIN' || user.role === 'SUB_ADMIN' || (user.role === 'TRAVEL_AGENT' && user.agentStatus === 'APPROVED'))) {
+        if (user && (user.role === 'SUPER_ADMIN' || user.role === 'SUB_ADMIN' || (user.role === 'B2B_AGENT' && user.agentStatus === 'APPROVED'))) {
           isAgent = true;
         }
       } catch (e) {
@@ -519,7 +519,7 @@ export const searchHotels = async (req: AuthRequest, res: Response) => {
     if (location) query.location = new RegExp(location as string, 'i');
     
     const { Hotel } = require('../inventory/inventory.model');
-    const hotels = await Hotel.find(query);
+    const hotels = await Hotel.find(query).lean();
     res.json(hotels);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -537,7 +537,7 @@ export const searchBuses = async (req: AuthRequest, res: Response) => {
     if (to) query.to = new RegExp(to as string, 'i');
     
     const { Bus } = require('../inventory/inventory.model');
-    const buses = await Bus.find(query);
+    const buses = await Bus.find(query).lean();
     res.json(buses);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

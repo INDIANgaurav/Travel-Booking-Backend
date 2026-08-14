@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 dotenv.config();
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import connectDB from './config/db';
 import './config/firebase-admin';
 
@@ -42,6 +43,9 @@ app.use(cors({
 app.get('/', (req, res) => {
   res.send('Travel Booking App API is running (TypeScript)...');
 });
+
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200, message: 'Too many requests from this IP, please try again after 15 minutes' });
+app.use('/api/', apiLimiter);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);

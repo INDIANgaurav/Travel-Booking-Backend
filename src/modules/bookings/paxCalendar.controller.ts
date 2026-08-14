@@ -13,7 +13,7 @@ export const getPaxCalendarStats = async (req: Request, res: Response) => {
     // Since we do not have specific booking data for pax calendar right now,
     // we'll return an empty list or aggregate based on Booking model.
     // For now, let's just return a successful response with an empty array.
-    // In production, we'd query: await Booking.find({ agentId, date: { $gte: start, $lte: end } })
+    // In production, we'd query: await Booking.find({ agentId, date: { $gte: start, $lte: end } }).lean()
     
     res.status(200).json({
       month,

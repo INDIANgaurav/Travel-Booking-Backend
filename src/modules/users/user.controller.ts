@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 // @access  Private
 export const getUserProfile = async (req: AuthRequest, res: Response) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
+    const user = await User.findById(req.user._id).select('-password').lean();
     if (user) {
       res.json(user);
     } else {
@@ -167,7 +167,7 @@ export const submitAgentOnboarding = async (req: AuthRequest, res: Response) => 
       return res.status(404).json({ message: 'User not found' });
     }
 
-    if (user.role !== 'TRAVEL_AGENT') {
+    if (user.role !== 'B2B_AGENT') {
       return res.status(403).json({ message: 'Only Travel Agents can perform this action' });
     }
 
@@ -195,10 +195,9 @@ export const submitAgentOnboarding = async (req: AuthRequest, res: Response) => 
 export const getSupplierStaff = async (req: AuthRequest, res: Response) => {
   try {
     const users = await User.find({ 
-      role: 'SUPPLIER_AGENT', 
-      companyName: req.user.companyName,
-      _id: { $ne: req.user._id } 
-    });
+      role: 'SUPPLIER_STAFF', 
+      supplierOwnerId: req.user._id
+    }).lean();
     res.json(users);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -222,7 +221,8 @@ export const addSupplierStaff = async (req: AuthRequest, res: Response) => {
       email,
       phone,
       password,
-      role: 'SUPPLIER_AGENT',
+      role: 'SUPPLIER_STAFF',
+      supplierOwnerId: req.user._id,
       companyName: req.user.companyName,
       agentStatus: 'APPROVED',
       isActive: true,
@@ -240,7 +240,7 @@ export const addSupplierStaff = async (req: AuthRequest, res: Response) => {
 export const updateSupplierStaff = async (req: AuthRequest, res: Response) => {
   try {
     const { isActive, name, phone, email } = req.body;
-    const user = await User.findOne({ _id: req.params.id, companyName: req.user.companyName });
+    const user = await User.findOne({ _id: req.params.id, supplierOwnerId: req.user._id });
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -255,6 +255,23 @@ export const updateSupplierStaff = async (req: AuthRequest, res: Response) => {
 
     const updatedUser = await user.save();
     res.json(updatedUser);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Delete supplier staff
+// @route   DELETE /api/users/supplier-staff/:id
+// @access  Private (Supplier only)
+export const deleteSupplierStaff = async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await User.findOneAndDelete({ _id: req.params.id, supplierOwnerId: req.user._id });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found or not authorized to delete' });
+    }
+
+    res.json({ message: 'Staff deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

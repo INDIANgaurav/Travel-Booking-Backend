@@ -9,7 +9,7 @@ import TourPackage from './tour.model';
 // @access  Public
 export const getDestinations = async (req: Request, res: Response) => {
   try {
-    const destinations = await Destination.find({ isActive: true });
+    const destinations = await Destination.find({ isActive: true }).lean();
     res.json(destinations);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -36,7 +36,7 @@ export const createDestination = async (req: Request, res: Response) => {
 export const getTourPackages = async (req: Request, res: Response) => {
   try {
     // Populate destination details to show in cards
-    const tours = await TourPackage.find({ isActive: true }).populate('destination', 'name city country');
+    const tours = await TourPackage.find({ isActive: true }).populate('destination', 'name city country').lean();
     res.json(tours);
   } catch (error: any) {
     res.status(500).json({ message: error.message });

@@ -41,3 +41,6 @@ build/
 
 # Firebase credentials
 firebase-service-account.json
+
+
+optimization_log.md

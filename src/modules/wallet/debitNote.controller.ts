@@ -24,7 +24,7 @@ export const requestDebitNote = async (req: Request, res: Response) => {
 export const getDebitNotes = async (req: Request, res: Response) => {
   try {
     const agentId = (req as any).user.id;
-    const debitNotes = await DebitNote.find({ agentId }).sort({ createdAt: -1 });
+    const debitNotes = await DebitNote.find({ agentId }).sort({ createdAt: -1 }).lean();
     res.status(200).json(debitNotes);
   } catch (error) {
     console.error('Error fetching debit notes:', error);
