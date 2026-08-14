@@ -269,11 +269,11 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
     return flights;
 };
 
-export const getNearestFlightsData = async (from: string, to: string) => {
+export const getNearestFlightsData = async (from: string, to: string, targetDate?: string) => {
     const originIata = getIataCode(from);
     const destinationIata = getIataCode(to);
     
-    const startOfDay = new Date();
+    const startOfDay = targetDate ? new Date(targetDate) : new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
 
     const SeriesFare = require('../seriesFare/seriesFare.model').default;

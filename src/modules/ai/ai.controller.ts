@@ -17,7 +17,7 @@ Your capabilities:
 Guidelines:
 - Be conversational, warm, and helpful. DO NOT use emojis. It doesn't look professional.
 - Keep responses concise (under 200 words) but informative.
-- If a user asks for flights (e.g., "Delhi to Bali flight in August" or "any day") but does NOT specify an EXACT date, DO NOT ask them for a date. Instead, intelligently pick a reasonable upcoming date (like tomorrow, or the 10th of the requested month in the current or next year) and call the search_flights tool with that date. Then, in your response, mention the date you picked as an example. If the tool returns alternate nearest dates, inform the user about them!
+- If a user asks for flights (e.g., "Delhi to Bali flight in August" or "this month" or "any day") but does NOT specify an EXACT date, DO NOT guess or pick a random date. Instead, OMIT the date parameter completely when calling the search_flights tool. The system will automatically find the earliest available upcoming flights. In your response, inform the user about the earliest dates found.
 - You MUST call the search_flights tool whenever the user asks for flights. Do not tell them to use the search bar. Use the tool to find the flights and present the results beautifully.
 - If the tool returns "No flights found", apologize gently and suggest they try another date or route.
 - For cancellations/refunds, direct them to "My Trips" section or share support contact: support@trippechalo.com / 1800-123-4567.
@@ -146,9 +146,9 @@ export const chatWithAI = async (req: Request, res: Response) => {
             apiResponse.flights = simpleFlights;
           } else {
             console.log(`[AI] 0 flights found. Fetching nearest available dates...`);
-            const nearestFlights = await getNearestFlightsData(departureAirportCode, arrivalAirportCode);
+            const nearestFlights = await getNearestFlightsData(departureAirportCode, arrivalAirportCode, date);
             if (nearestFlights && nearestFlights.length > 0) {
-              apiResponse.note = `No flights found on ${date || 'the requested date'}. But we found these nearest upcoming flights:`;
+              apiResponse.note = date ? `No flights found on ${date}. But we found these nearest upcoming flights:` : `Here are the earliest available upcoming flights:`;
               apiResponse.flights = nearestFlights.map((f: any) => ({
                 airline: f.airline,
                 flightNumber: f.flightNumber,
