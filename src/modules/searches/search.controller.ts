@@ -6,6 +6,7 @@ import { searchFlightsNexus, checkAvailability } from '../flights/nexusdmc.servi
 import jwt from 'jsonwebtoken';
 import User from '../users/user.model';
 import SeriesFare from '../seriesFare/seriesFare.model';
+import Supplier from '../supplier/supplier.model';
 import { Request } from 'express';
 
 // @desc    Get recent searches for user
@@ -93,6 +94,13 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
     const segment = `${originIata}-${destinationIata}-${formattedDate}`;
     const pax = `${adultCount}-${childCount}-${infantCount}`;
 
+    let nexusSupplier: any = null;
+    try {
+      nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' });
+    } catch (err) {
+      console.error("Error fetching Nexus DMC supplier", err);
+    }
+
     let searchResult;
     try {
       searchResult = await searchFlightsNexus(segment, pax);
@@ -120,14 +128,16 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
         const arrTime = new Date(lastLeg.arrival_time);
         const durationMinutes = flightSegment.duration;
 
-        let price = offer.total_price;
+        let basePrice = offer.total_price;
         
-        // Apply markup for non-agents (e.g. 10%)
-        // if (!isAgent) {
-        //   price = price * 1.10;
-        // }
+        // Calculate Commission
+        let finalCommission = 0;
+        if (nexusSupplier && nexusSupplier.commission) {
+          const percComm = (basePrice * nexusSupplier.commission.percentage) / 100;
+          finalCommission = Math.max(percComm, nexusSupplier.commission.fixedAmount);
+        }
         
-        price = Math.round(price);
+        const price = Math.round(basePrice + finalCommission);
 
         return {
           _id: offer.key, // Use NexusDMC key so we can book it later
@@ -146,13 +156,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
           nexus_query: searchResult._data.query, // Need to save this to pass back for Check Avail / Booking
           nexus_total_price: offer.total_price, // The EXACT price Nexus expects in Book API
           seatsAvailable: offer.seats_available,
-          adultPrice: offer.adult_price,
-          childPrice: offer.child_price,
+          adultPrice: offer.adult_price + (finalCommission / (adultCount + childCount + infantCount)), // Distributed roughly
+          childPrice: offer.child_price + (finalCommission / (adultCount + childCount + infantCount)),
           infantPrice: offer.infant_price,
           checkinBaggage: offer.checkin_baggage,
           cabinBaggage: offer.cabin_baggage,
           cabinClass: offer.cabin_type,
-          inputRequirements: searchResult._data.input_requirements
+          inputRequirements: searchResult._data.input_requirements,
+          supplierId: nexusSupplier?._id, // Attach supplierId for pre-booking validation
+          agentCommission: finalCommission
         };
       });
     }
@@ -172,7 +184,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
         travelDate: { $gte: startOfDay, $lte: endOfDay }
       };
 
-      const seriesFares = await SeriesFare.find(sfFilter).lean();
+      const seriesFares = await SeriesFare.find(sfFilter).populate('supplierId').lean();
       const sfMapped = seriesFares.map((sf: any) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
         const depTime = `${dateStr}T${sf.departureTime}:00`;
@@ -186,8 +198,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
         const durationMinutes = Math.round((arrDateObj.getTime() - depDateObj.getTime()) / 60000);
 
         const basePrice = Math.round((sf.adtFare * adultCount) + (sf.chdFare * childCount) + (sf.infFare * infantCount));
-        const commissionTotal = (sf.agentCommission || 0) * (adultCount + childCount); // Assuming commission applies to adults and children
-        const price = basePrice + commissionTotal; // Show total (Base + Commission) on search results page
+        
+        let finalCommission = (sf.agentCommission || 0) * (adultCount + childCount); // Fallback to sf's agentCommission
+        const supplier = sf.supplierId;
+        if (supplier && supplier.commission) {
+          const percComm = (basePrice * supplier.commission.percentage) / 100;
+          finalCommission = Math.max(percComm, supplier.commission.fixedAmount);
+        }
+
+        const price = basePrice + finalCommission; // Show total (Base + Commission) on search results page
 
         return {
           _id: `SF_${sf._id}`,
@@ -206,8 +225,8 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
           arrivalTime: arrDateObj.toISOString().slice(0, 19), // Save the calculated exact time
           durationMinutes: durationMinutes > 0 ? durationMinutes : 135, // Fallback if negative
           price: price, // Show exact base + commission without additional markup
-          adultPrice: sf.adtFare + (sf.agentCommission || 0),
-          childPrice: sf.chdFare + (sf.agentCommission || 0),
+          adultPrice: sf.adtFare + (finalCommission / (adultCount + childCount + infantCount)),
+          childPrice: sf.chdFare + (finalCommission / (adultCount + childCount + infantCount)),
           infantPrice: sf.infFare,
           stops: 0,
           isSeriesFare: true,
@@ -215,8 +234,9 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
           airlinePnr: sf.airlinePnr,
           availableSeats: sf.availableSeats,
           baseFare: basePrice,
-          agentCommission: commissionTotal,
-          commissionPerPassenger: sf.agentCommission || 0
+          agentCommission: finalCommission,
+          commissionPerPassenger: finalCommission / (adultCount + childCount + infantCount),
+          supplierId: supplier ? supplier._id : null
         };
       });
 

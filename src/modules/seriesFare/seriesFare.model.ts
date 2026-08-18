@@ -29,7 +29,7 @@ export interface ISeriesFare extends Document {
 
 const seriesFareSchema = new Schema<ISeriesFare>(
   {
-    supplierId: { type: Schema.Types.ObjectId, ref: 'User' },
+    supplierId: { type: Schema.Types.ObjectId, ref: 'Supplier' },
     supplierName: { type: String, default: 'PJ HOLIDAY BOOKERS' },
     sfId: { type: String, required: true, unique: true },
     airline: { type: String, required: true },

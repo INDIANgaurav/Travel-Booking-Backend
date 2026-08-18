@@ -58,6 +58,38 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
         }
       }
 
+      // Pre-Booking Supplier Validation
+      const Supplier = require('../supplier/supplier.model').default;
+      const supplierId = details?.supplierId;
+      const flightCostToSupplier = details?.nexus_total_price || details?.baseFare || 0;
+      let supplierDoc = null;
+
+      if (supplierId && flightCostToSupplier > 0) {
+        supplierDoc = await Supplier.findById(supplierId).session(session);
+        if (!supplierDoc) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ message: 'Linked supplier account not found' });
+        }
+        if ((supplierDoc.balance + supplierDoc.creditLimit) < flightCostToSupplier) {
+          await session.abortTransaction();
+          session.endSession();
+          return res.status(400).json({ message: 'System error: Unable to fulfill booking at this time (Supplier Funds Insufficient).' });
+        }
+        // Deduct from supplier balance
+        supplierDoc.balance -= flightCostToSupplier;
+        await supplierDoc.save({ session });
+        
+        // Record supplier transaction
+        const SupplierTransaction = require('../supplier/supplierTransaction.model').default;
+        await SupplierTransaction.create([{
+          supplierId: supplierDoc._id,
+          type: 'DEDUCTION',
+          amount: flightCostToSupplier,
+          description: `Flight Booking Deduction (User: ${req.user._id}, Amt: ${flightCostToSupplier})`
+        }], { session });
+      }
+
       const user = await User.findOneAndUpdate(
         { _id: req.user._id, walletBalance: { $gte: totalAmount } },
         { $inc: { walletBalance: -totalAmount } },
@@ -205,6 +237,7 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
         const refundSession = await mongoose.startSession();
         refundSession.startTransaction();
         try {
+          // 1. Rollback User Wallet
           await User.findByIdAndUpdate(req.user._id, { $inc: { walletBalance: totalAmount } }, { session: refundSession });
           await Transaction.create([{
             user: req.user._id, 
@@ -215,6 +248,20 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
             pnr: newBooking.bookingId
           }], { session: refundSession });
           
+          // 2. Rollback Supplier Wallet
+          if (supplierId && flightCostToSupplier > 0) {
+            const Supplier = require('../supplier/supplier.model').default;
+            const SupplierTransaction = require('../supplier/supplierTransaction.model').default;
+            
+            await Supplier.findByIdAndUpdate(supplierId, { $inc: { balance: flightCostToSupplier } }, { session: refundSession });
+            await SupplierTransaction.create([{
+              supplierId,
+              type: 'REFUND',
+              amount: flightCostToSupplier,
+              description: `Auto-Refund for failed Flight Booking: ${newBooking.bookingId}`
+            }], { session: refundSession });
+          }
+
           newBooking.status = 'FAILED';
           newBooking.cancellationReason = 'Flight Booking API Failed - Auto Refunded';
           newBooking.refundAmount = totalAmount;

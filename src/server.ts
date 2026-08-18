@@ -28,8 +28,11 @@ import invoiceRoutes from './modules/bookings/invoice.routes';
 import creditNoteRoutes from './modules/wallet/creditNote.routes';
 import accountStatementRoutes from './modules/wallet/accountStatement.routes';
 import aiRoutes from './modules/ai/ai.routes';
+import supplierRoutes from './modules/supplier/supplier.routes';
+import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB();
+seedSuppliers();
 
 const app = express();
 
@@ -58,6 +61,8 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/cms', cmsRoutes);
 app.use('/api/hotels', hotelRoutes);
 app.use('/api/series-fare', seriesFareRoutes);
+app.get('/api/test-supplier', (req, res) => res.json({ status: 'ok' }));
+app.use('/api/suppliers', supplierRoutes);
 
 app.use('/api/markup', markupRoutes);
 app.use('/api/offline-booking', b2bOfflineBookingRoutes);
@@ -70,6 +75,7 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/credit-notes', creditNoteRoutes);
 app.use('/api/account-statement', accountStatementRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/suppliers', supplierRoutes);
 
 // Global Error Handler to catch [object Object] issues
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

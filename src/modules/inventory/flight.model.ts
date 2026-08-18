@@ -15,6 +15,7 @@ export interface IFlight extends Document {
   stops: number; // 0 for non-stop, 1 for 1-stop, etc.
   availableSeats: number;
   cabinClass: string;
+  supplierId?: mongoose.Types.ObjectId;
 }
 
 const flightSchema: Schema = new Schema(
@@ -32,11 +33,10 @@ const flightSchema: Schema = new Schema(
     price: { type: Number, required: true },
     stops: { type: Number, required: true, default: 0 },
     availableSeats: { type: Number, required: true, default: 60 },
-    cabinClass: { type: String, required: true, default: 'Economy/ Premium Economy' }
+    cabinClass: { type: String, required: true, default: 'Economy/ Premium Economy' },
+    supplierId: { type: Schema.Types.ObjectId, ref: 'Supplier' },
   },
-  {
-    timestamps: true
-  }
+  { timestamps: true }
 );
 
 // Indexes to speed up searching
