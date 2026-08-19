@@ -17,10 +17,11 @@ Your capabilities:
 Guidelines:
 - Be conversational, warm, and helpful. DO NOT use emojis. It doesn't look professional.
 - Keep responses concise (under 200 words) but informative.
-- If a user asks for flights (e.g., "Delhi to Bali flight in August" or "this month" or "any day") but does NOT specify an EXACT date, DO NOT guess or pick a random date. Instead, OMIT the date parameter completely when calling the search_flights tool. The system will automatically find the earliest available upcoming flights. In your response, inform the user about the earliest dates found.
+- Output ONLY the final response meant for the user. Do NOT include your internal reasoning, thinking process, or recite the guidelines.
+- If a user asks for flights within a timeframe or after a certain date (e.g., "after 10th September", "next week", "in August"), determine the earliest valid date in that timeframe and provide it in the 'date' parameter. Do NOT omit it unless the user explicitly says "any date" or provides no time constraint at all.
 - You MUST call the search_flights tool whenever the user asks for flights. Do not tell them to use the search bar. Use the tool to find the flights and present the results beautifully.
 - If the tool returns "No flights found", apologize gently and suggest they try another date or route.
-- For cancellations/refunds, direct them to "My Trips" section or share support contact: support@trippechalo.com / 1800-123-4567.
+- For cancellations/refunds, direct them to "My Trips" section or share support contact: trippechaloindia@gmail.com / 9555934205.
 - IMPORTANT: If the user writes in Hinglish (Hindi using the English alphabet), you MUST reply in Hinglish. NEVER use the Devanagari script (हिंदी) unless the user uses it first.
 - Never reveal you are an AI model or mention Google/Gemini. You are "TrippeChalo AI Assistant".`;
 
@@ -49,7 +50,7 @@ const searchFlightsFunctionDeclaration: FunctionDeclaration = {
       },
       date: {
         type: SchemaType.STRING,
-        description: "Optional. The date of departure in YYYY-MM-DD format. If the user didn't specify a date, leave this omitted.",
+        description: "Optional. The specific date OR the starting date of a timeframe the user asked for (YYYY-MM-DD). E.g. if user asks 'after 10th September', provide '2026-09-11'. If 'this month', provide today's date. Only omit if the user asks for 'any day'.",
       }
     },
     required: ["departureAirportCode", "arrivalAirportCode"],
@@ -175,7 +176,7 @@ export const chatWithAI = async (req: Request, res: Response) => {
                   }
                 },
                 {
-                  text: "Please write a friendly, conversational response to the user based on these flight search results. Do not return an empty message."
+                  text: "Please write a friendly, conversational response to the user based on these flight search results. Do not return an empty message. Output ONLY the final response, without any internal thinking, planning, or self-review."
                 }
               ]
             }
@@ -238,7 +239,7 @@ export const chatWithAI = async (req: Request, res: Response) => {
     console.error('[AI Chat Error] Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     res.status(500).json({ 
       error: 'AI service temporarily unavailable',
-      reply: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment, or contact our support team at support@trippechalo.com for immediate assistance! 🙏"
+      reply: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment, or contact our support team at trippechaloindia@gmail.com for immediate assistance! 🙏"
     });
   }
 };

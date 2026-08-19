@@ -34,11 +34,11 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
       // New profile fields
       if (req.body.firstName !== undefined) user.firstName = req.body.firstName;
       if (req.body.lastName !== undefined) user.lastName = req.body.lastName;
-      if (req.body.gender !== undefined) user.gender = req.body.gender;
+      if (req.body.gender !== undefined) user.gender = req.body.gender || undefined;
       if (req.body.nationality !== undefined) user.nationality = req.body.nationality;
-      if (req.body.dob !== undefined) user.dob = req.body.dob;
+      if (req.body.dob !== undefined) user.dob = req.body.dob || undefined;
       if (req.body.passportNumber !== undefined) user.passportNumber = req.body.passportNumber;
-      if (req.body.passportExpiry !== undefined) user.passportExpiry = req.body.passportExpiry;
+      if (req.body.passportExpiry !== undefined) user.passportExpiry = req.body.passportExpiry || undefined;
       if (req.body.issuingCountry !== undefined) user.issuingCountry = req.body.issuingCountry;
       if (req.body.panNumber !== undefined) user.panNumber = req.body.panNumber;
 

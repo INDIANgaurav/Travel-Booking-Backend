@@ -3,8 +3,10 @@ import dotenv from 'dotenv';
 dotenv.config();
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import connectDB from './config/db';
 import './config/firebase-admin';
+import { mongoSanitize } from './middleware/sanitize.middleware';
 
 import authRoutes from './modules/auth/auth.routes';
 import adminRoutes from './modules/users/admin.routes';
@@ -38,6 +40,11 @@ const app = express();
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Security Middlewares
+app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(mongoSanitize); // Custom middleware to prevent NoSQL Injection
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'http://localhost:5173'], // Allowing standard React/Vite ports
   credentials: true,
