@@ -33,8 +33,9 @@ import aiRoutes from './modules/ai/ai.routes';
 import supplierRoutes from './modules/supplier/supplier.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
-connectDB();
-seedSuppliers();
+connectDB().then(() => {
+  seedSuppliers();
+});
 
 const app = express();
 

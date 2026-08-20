@@ -115,9 +115,61 @@ export const deleteSeriesFare = async (req: AuthRequest, res: Response) => {
 
 export const getSupplierSummary = async (req: AuthRequest, res: Response) => {
   try {
-    const supplierId = req.user?.role === 'SUPPLIER_STAFF' ? req.user?.supplierOwnerId : req.user?._id;
+    let supplierId = req.user?.role === 'SUPPLIER_STAFF' ? req.user?.supplierOwnerId : req.user?._id;
     
-    const faresCount = await SeriesFare.countDocuments({ supplierId, status: 'Active' });
+    // If admin, they can pass specific supplierId from query
+    if (req.user?.role === 'SUPER_ADMIN' || req.user?.role === 'SUB_ADMIN') {
+        if (req.query.supplierId && req.query.supplierId !== 'ALL' && req.query.supplierId !== '') {
+            supplierId = req.query.supplierId;
+        }
+    }
+
+    const { timeFilter } = req.query;
+    let dateFilter: any = {};
+    if (timeFilter) {
+      const now = new Date();
+      if (timeFilter === 'Day') {
+        const start = new Date(now.setHours(0, 0, 0, 0));
+        const end = new Date(now.setHours(23, 59, 59, 999));
+        dateFilter = { $gte: start, $lte: end };
+      } else if (timeFilter === 'Week') {
+        const start = new Date(now);
+        start.setDate(now.getDate() - now.getDay() + 1);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
+        dateFilter = { $gte: start, $lte: end };
+      } else if (timeFilter === 'Month') {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        dateFilter = { $gte: start, $lte: end };
+      } else if (timeFilter === 'Quarter') {
+        const quarter = Math.floor(now.getMonth() / 3);
+        const start = new Date(now.getFullYear(), quarter * 3, 1);
+        const end = new Date(now.getFullYear(), (quarter + 1) * 3, 0, 23, 59, 59, 999);
+        dateFilter = { $gte: start, $lte: end };
+      } else if (timeFilter === 'Year') {
+        const start = new Date(now.getFullYear(), 0, 1);
+        const end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+        dateFilter = { $gte: start, $lte: end };
+      } else if (timeFilter === 'Custom') {
+        const { fromDate, toDate } = req.query;
+        if (fromDate && toDate) {
+          const start = new Date(fromDate as string);
+          start.setHours(0, 0, 0, 0);
+          const end = new Date(toDate as string);
+          end.setHours(23, 59, 59, 999);
+          dateFilter = { $gte: start, $lte: end };
+        }
+      }
+    }
+
+    const faresQuery: any = { status: 'Active' };
+    if (supplierId && supplierId !== 'ALL') faresQuery.supplierId = supplierId;
+    // We could filter active fares count by creation date, but usually "Active Fares" means currently active regardless of creation date.
+    // Keeping faresCount as overall active fares for this supplier.
+    const faresCount = await SeriesFare.countDocuments(faresQuery);
     
     const supplierFares = await SeriesFare.find({ supplierId }).select('_id').lean();
     if (!supplierFares.length) {
@@ -133,8 +185,13 @@ export const getSupplierSummary = async (req: AuthRequest, res: Response) => {
     const Booking = require('../bookings/booking.model').default;
     const mongoose = require('mongoose');
 
+    const matchStage: any = { type: 'FLIGHT' };
+    if (Object.keys(dateFilter).length > 0) {
+      matchStage.createdAt = dateFilter;
+    }
+
     const aggResult = await Booking.aggregate([
-      { $match: { type: 'FLIGHT' } },
+      { $match: matchStage },
       { 
          $addFields: {
            cleanFlightKeys: {
@@ -162,9 +219,9 @@ export const getSupplierSummary = async (req: AuthRequest, res: Response) => {
         }
       },
       {
-        $match: {
+        $match: (supplierId && supplierId !== 'ALL') ? {
           'seriesFares.supplierId': new mongoose.Types.ObjectId(supplierId)
-        }
+        } : { 'seriesFares.0': { $exists: true } }
       },
       {
         $group: {

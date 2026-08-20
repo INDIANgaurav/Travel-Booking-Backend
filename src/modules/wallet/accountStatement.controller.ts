@@ -3,14 +3,30 @@ import Transaction from './wallet.model';
 
 export const getAccountStatement = async (req: Request, res: Response) => {
   try {
-    const agentId = (req as any).user.id;
+    const requestingUser = (req as any).user;
+    let agentId = requestingUser.id;
+
+    // If an Admin requests a specific user's statement
+    if (requestingUser.role === 'SUPER_ADMIN' || requestingUser.role === 'SUB_ADMIN') {
+      if (req.query.userId) {
+        agentId = req.query.userId as string;
+      }
+    }
+
+    const filter: any = {};
+    if (agentId !== 'ALL') {
+      filter.user = agentId;
+    }
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const search = ((req.query.search as string) || '').toLowerCase();
     const fromDateStr = req.query.fromDate as string;
     const toDateStr = req.query.toDate as string;
+    const month = req.query.month as string;
+    const year = parseInt(req.query.year as string);
+    const type = req.query.type as string;
 
-    const filter: any = { user: agentId };
 
     if (fromDateStr && toDateStr) {
       const from = new Date(fromDateStr);
@@ -18,7 +34,18 @@ export const getAccountStatement = async (req: Request, res: Response) => {
       const to = new Date(toDateStr);
       to.setUTCHours(23, 59, 59, 999);
       filter.date = { $gte: from, $lte: to };
+    } else if (month && year) {
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthIndex = monthNames.indexOf(month);
+      if (monthIndex !== -1) {
+        const from = new Date(Date.UTC(year, monthIndex, 1, 0, 0, 0, 0));
+        const to = new Date(Date.UTC(year, monthIndex + 1, 0, 23, 59, 59, 999));
+        filter.date = { $gte: from, $lte: to };
+      }
     }
+    
+    // If mini statement, we can restrict date to last 30 days or just rely on the pagination limit.
+    // The frontend sends type=mini, we will just use the limit provided (default 10).
 
     if (search) {
       filter.$or = [
@@ -26,12 +53,26 @@ export const getAccountStatement = async (req: Request, res: Response) => {
         { description: { $regex: search, $options: 'i' } },
         { pnr: { $regex: search, $options: 'i' } }
       ];
+
+      // Support searching by the auto-generated reference number (last 6 chars of _id)
+      if (/^[a-fA-F0-9]+$/.test(search)) {
+        filter.$or.push({
+          $expr: {
+            $regexMatch: {
+              input: { $toString: '$_id' },
+              regex: search,
+              options: 'i'
+            }
+          }
+        });
+      }
     }
 
     const totalRecords = await Transaction.countDocuments(filter);
 
     // Fetch only the paginated transactions (Latest first)
     const paginatedTxns = await Transaction.find(filter)
+      .populate('user', 'name firstName lastName companyName email')
       .sort({ date: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -41,7 +82,7 @@ export const getAccountStatement = async (req: Request, res: Response) => {
     paginatedTxns.reverse(); // Oldest to Newest for sequential balance calculation
     const mongoose = require('mongoose');
 
-    if (paginatedTxns.length > 0) {
+    if (paginatedTxns.length > 0 && agentId !== 'ALL') {
       const oldestTxn = paginatedTxns[0];
       const newestTxn = paginatedTxns[paginatedTxns.length - 1];
 
@@ -94,8 +135,12 @@ export const getAccountStatement = async (req: Request, res: Response) => {
     const mappedData = paginatedTxns.map((txn: any, idx: number) => {
       const isCredit = txn.type === 'CREDIT';
       
+      const userObj = txn.user || {};
+      const actualUserName = userObj.name || (userObj.firstName ? `${userObj.firstName} ${userObj.lastName || ''}`.trim() : userObj.companyName) || 'Unknown User';
+
       return {
         sNo: ((page - 1) * limit) + idx + 1, 
+        userName: actualUserName,
         referenceNo: txn.referenceNo || txn._id.toString().substring(18).toUpperCase(),
         pnr: txn.pnr || '—', 
         productName: txn.productName || (txn.description.toLowerCase().includes('topup') ? 'Wallet TopUp' : 'Service'), 
