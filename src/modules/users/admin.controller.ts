@@ -5,7 +5,12 @@ export const getUsers = async (req: Request, res: Response) => {
   try {
     const filter: any = { role: { $ne: 'SUPER_ADMIN' } };
     if (req.query.role && req.query.role !== 'SUPER_ADMIN') {
-      filter.role = req.query.role;
+      const roles = (req.query.role as string).split(',');
+      if (roles.length > 1) {
+        filter.role = { $in: roles };
+      } else {
+        filter.role = req.query.role;
+      }
     }
     
     const page = parseInt(req.query.page as string) || 1;
