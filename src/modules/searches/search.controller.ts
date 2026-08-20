@@ -184,7 +184,10 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
         travelDate: { $gte: startOfDay, $lte: endOfDay }
       };
 
-      const seriesFares = await SeriesFare.find(sfFilter).populate('supplierId').lean();
+      const seriesFares = await SeriesFare.find(sfFilter).lean();
+      // Fetch all active suppliers to match by name (supplierId in SF stores User._id, not Supplier._id)
+      const allSuppliers = await Supplier.find({ isActive: true }).lean();
+      
       const sfMapped = seriesFares.map((sf: any) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
         const depTime = `${dateStr}T${sf.departureTime}:00`;
@@ -200,7 +203,10 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
         const basePrice = Math.round((sf.adtFare * adultCount) + (sf.chdFare * childCount) + (sf.infFare * infantCount));
         
         let finalCommission = (sf.agentCommission || 0) * (adultCount + childCount); // Fallback to sf's agentCommission
-        const supplier = sf.supplierId;
+        // Match supplier by name (case-insensitive) since supplierId field stores User._id not Supplier._id
+        const supplier = allSuppliers.find((s: any) => 
+          s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
+        );
         if (supplier && supplier.commission) {
           const percComm = (basePrice * supplier.commission.percentage) / 100;
           finalCommission = Math.max(percComm, supplier.commission.fixedAmount);
@@ -305,17 +311,32 @@ export const getNearestFlightsData = async (from: string, to: string, targetDate
     };
 
     const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(5).lean();
+    // Fetch all active suppliers to match by name for commission calculation
+    const allSuppliers = await Supplier.find({ isActive: true }).lean();
     
     const sfMapped = seriesFares.map((sf: any) => {
       const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
       const depTime = `${dateStr}T${sf.departureTime}:00`;
+      
+      // Calculate commission from supplier (compare percentage vs fixedAmount, use whichever is higher)
+      let commission = sf.agentCommission || 0;
+      const supplier = allSuppliers.find((s: any) => 
+        s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
+      );
+
+      if (supplier && supplier.commission) {
+        const percComm = (sf.adtFare * supplier.commission.percentage) / 100;
+        commission = Math.max(percComm, supplier.commission.fixedAmount);
+      }
+
+      
       return {
         airline: sf.airline,
         flightNumber: sf.flightNo || 'SF-1107',
         departureCity: sf.origin,
         arrivalCity: sf.destination,
         departureTime: depTime,
-        price: sf.adtFare + (sf.agentCommission || 0),
+        price: sf.adtFare + commission,
         isSeriesFare: true,
         availableSeats: sf.availableSeats
       };
@@ -483,11 +504,24 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
       return `${year}-${month}-${day}`;
     };
 
-    // Group Series Fares
+    // Fetch all active suppliers for commission calculation
+    const calSuppliers = await Supplier.find({ isActive: true }).lean();
+
+    // Group Series Fares (with supplier commission: compare percentage vs fixedAmount, use higher)
     sfFlights.forEach((sf: any) => {
       if (!sf.travelDate) return;
       const dateStr = formatDateStr(sf.travelDate);
-      const price = Math.round(sf.adtFare + (sf.agentCommission || 0));
+      
+      let commission = sf.agentCommission || 0;
+      const supplier = calSuppliers.find((s: any) => 
+        s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
+      );
+      if (supplier && supplier.commission) {
+        const percComm = (sf.adtFare * supplier.commission.percentage) / 100;
+        commission = Math.max(percComm, supplier.commission.fixedAmount);
+      }
+      
+      const price = Math.round(sf.adtFare + commission);
       if (!pricesMap[dateStr] || price < pricesMap[dateStr]) {
         pricesMap[dateStr] = price;
       }
