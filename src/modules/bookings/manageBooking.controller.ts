@@ -1,11 +1,12 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import Booking from './booking.model';
 import { AuthRequest } from '../../middleware/auth.middleware';
 
 export const getManageBookings = async (req: AuthRequest, res: Response) => {
   try {
     const agentId = req.user?._id;
-    const userRole = req.user?.role;
+    const userRoles = req.user?.roles || [];
     const { product, searchType, status, fromDate, toDate, month, year, searchOption, searchValue } = req.query;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
@@ -13,10 +14,10 @@ export const getManageBookings = async (req: AuthRequest, res: Response) => {
 
     const query: any = {};
     
-    if (userRole === 'USER' || userRole === 'B2B_AGENT') {
+    if (userRoles.includes('USER') || userRoles.includes('B2B_AGENT')) {
       // Users and Travel Agents see only bookings they created
       query.user = agentId;
-    } else if (userRole === 'SUPPLIER_AGENT') {
+    } else if (userRoles.includes('SUPPLIER_AGENT') || userRoles.includes('SUPPLIER_STAFF')) {
       // Logic moved to aggregation pipeline below
     }
 
@@ -72,9 +73,7 @@ export const getManageBookings = async (req: AuthRequest, res: Response) => {
     let bookings = [];
     let totalRecords = 0;
 
-    if (userRole === 'SUPPLIER_AGENT') {
-      const mongoose = require('mongoose');
-      
+    if (userRoles.includes('SUPPLIER_AGENT') || userRoles.includes('SUPPLIER_STAFF')) {
       const matchPipeline = [
         { $match: query },
         { 

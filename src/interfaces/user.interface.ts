@@ -6,9 +6,9 @@ export type Department = 'Sales' | 'Operations' | 'Customer Support' | 'Accounts
 export interface IUser extends Document {
   name: string;
   email: string;
-  phone: string;
+  phone?: string;
   password?: string;
-  role: Role;
+  roles: Role[];
   department?: Department;
   companyName?: string | null;
   companyRole?: string;
@@ -46,7 +46,16 @@ export interface IUser extends Document {
     passportNumber?: string;
   }[];
   walletBalance: number;
+  creditBalance: number;
   isApproved: boolean;
+  resultExpiryTime?: number;
+  otpTime?: number;
+  requiredTravelDate?: boolean;
+  extendedDomain?: string;
+  irctcAgentId?: string;
+  displayOnProfileIcon?: 'Company Name' | 'User Name' | 'Show Both';
+  referredBy?: string;
+  reportingTo?: string;
   matchPassword(enteredPassword: string): Promise<boolean>;
   resetPasswordToken?: string;
   resetPasswordExpire?: Date;

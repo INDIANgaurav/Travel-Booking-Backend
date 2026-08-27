@@ -21,10 +21,10 @@ const userSchema = new Schema<IUser>(
       type: String,
       // optional for OAuth
     },
-    role: {
-      type: String,
+    roles: {
+      type: [String],
       enum: ['SUPER_ADMIN', 'SUB_ADMIN', 'B2B_AGENT', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF', 'USER'],
-      default: 'USER',
+      default: ['USER'],
     },
     department: {
       type: String,
@@ -97,6 +97,41 @@ const userSchema = new Schema<IUser>(
     isApproved: {
       type: Boolean,
       default: false,
+    },
+    creditBalance: {
+      type: Number,
+      default: 0,
+    },
+    resultExpiryTime: {
+      type: Number,
+      default: 30,
+    },
+    otpTime: {
+      type: Number,
+      default: 1440,
+    },
+    requiredTravelDate: {
+      type: Boolean,
+      default: false,
+    },
+    extendedDomain: {
+      type: String,
+      default: '',
+    },
+    irctcAgentId: {
+      type: String,
+      default: '',
+    },
+    displayOnProfileIcon: {
+      type: String,
+      enum: ['Company Name', 'User Name', 'Show Both'],
+      default: 'Show Both',
+    },
+    referredBy: {
+      type: String,
+    },
+    reportingTo: {
+      type: String,
     },
     resetPasswordToken: String,
     resetPasswordExpire: Date,

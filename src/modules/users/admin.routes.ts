@@ -1,5 +1,5 @@
 import express from 'express';
-import { getUsers, approveAgent, updateUser, createSubAdmin, createAgent, getAllBookings, deleteUser } from './admin.controller';
+import { getUsers, getUserById, approveAgent, updateUser, createSubAdmin, createAgent, getAllBookings, deleteUser } from './admin.controller';
 import { 
   getAllOfflineBookings, updateOfflineBookingStatus,
   getAllTaxInvoices, updateTaxInvoiceStatus,
@@ -26,6 +26,7 @@ router.put(
   approveAgent
 );
 
+router.get('/users/:id', authorizeRoles('SUPER_ADMIN', 'SUB_ADMIN'), getUserById);
 router.put('/users/:id', authorizeRoles('SUPER_ADMIN'), updateUser);
 router.delete('/users/:id', authorizeRoles('SUPER_ADMIN'), deleteUser);
 router.post('/subadmins', authorizeRoles('SUPER_ADMIN'), createSubAdmin);

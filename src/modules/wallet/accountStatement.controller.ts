@@ -7,7 +7,7 @@ export const getAccountStatement = async (req: Request, res: Response) => {
     let agentId = requestingUser.id;
 
     // If an Admin requests a specific user's statement
-    if (requestingUser.role === 'SUPER_ADMIN' || requestingUser.role === 'SUB_ADMIN') {
+    if (requestingUser.roles?.includes('SUPER_ADMIN') || requestingUser.roles?.includes('SUB_ADMIN')) {
       if (req.query.userId) {
         agentId = req.query.userId as string;
       }
@@ -131,21 +131,45 @@ export const getAccountStatement = async (req: Request, res: Response) => {
 
     paginatedTxns.reverse(); // Revert back to Latest first
 
+    // Fetch related bookings to get actual airline PNR
+    const bookingIds = paginatedTxns.map((t: any) => t.pnr).filter(Boolean);
+    const Booking = require('../bookings/booking.model').default;
+    const relatedBookings = await Booking.find({ bookingId: { $in: bookingIds } }, 'bookingId details status').lean();
+    
+    const bookingMap = new Map();
+    relatedBookings.forEach((b: any) => {
+      let mainPassenger = '—';
+      if (b.details?.passengers && b.details.passengers.length > 0) {
+        mainPassenger = b.details.passengers[0].name || b.details.passengers[0].first_name || '—';
+      }
+      const bookingMobile = b.details?.contactDetails?.phone;
+
+      const isFailed = b.status === 'FAILED' || b.status === 'FAILED_REFUNDING' || b.status === 'CANCELLED';
+      bookingMap.set(b.bookingId, {
+        pnr: isFailed ? '—' : (b.details?.pnr || '—'),
+        passengerName: mainPassenger,
+        mobileNumber: bookingMobile
+      });
+    });
+
     // Map to frontend expected format
     const mappedData = paginatedTxns.map((txn: any, idx: number) => {
       const isCredit = txn.type === 'CREDIT';
       
       const userObj = txn.user || {};
       const actualUserName = userObj.name || (userObj.firstName ? `${userObj.firstName} ${userObj.lastName || ''}`.trim() : userObj.companyName) || 'Unknown User';
+      const actualMobile = userObj.mobile || userObj.phone || '—';
 
       return {
         sNo: ((page - 1) * limit) + idx + 1, 
         userName: actualUserName,
         referenceNo: txn.referenceNo || txn._id.toString().substring(18).toUpperCase(),
-        pnr: txn.pnr || '—', 
+        bookingId: txn.pnr || '—', 
+        airlinePnr: bookingMap.get(txn.pnr)?.pnr || '—',
         productName: txn.productName || (txn.description.toLowerCase().includes('topup') ? 'Wallet TopUp' : 'Service'), 
         description: txn.description,
-        passengerName: txn.passengerName || '—', 
+        passengerName: txn.passengerName || bookingMap.get(txn.pnr)?.passengerName || '—', 
+        mobileNumber: bookingMap.get(txn.pnr)?.mobileNumber || actualMobile,
         dateTime: txn.date,
         grossAmount: txn.grossAmount || (isCredit ? 0 : txn.amount),
         markup: txn.markup || 0,

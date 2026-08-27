@@ -76,7 +76,7 @@ const getIataCode = (cityName: string): string => {
   return map[cityLower] || city.toUpperCase().substring(0, 3);
 };
 
-export const getFlightsData = async (queryParams: any, isAgent: boolean = false) => {
+export const getFlightsData = async (queryParams: any, isAgent: boolean = false, agentId: any = null) => {
     const { from, to, date, adults, children, infants, cabinClass, returnDate, tripType, stops, morningDeparture, passengers } = queryParams;
     const originIata = getIataCode(from as string);
     const destinationIata = getIataCode(to as string);
@@ -95,11 +95,79 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
     const pax = `${adultCount}-${childCount}-${infantCount}`;
 
     let nexusSupplier: any = null;
+    let agentMarkupData: any = null;
     try {
       nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' });
+      
+      // Fetch agent's active flight markup if logged in
+      if (isAgent && agentId) {
+        const Markup = require('../agents/markup.model').Markup;
+        agentMarkupData = await Markup.findOne({ 
+          agentId, 
+          product: 'flights',
+          status: 'ACTIVE' 
+        });
+      }
     } catch (err) {
-      console.error("Error fetching Nexus DMC supplier", err);
+      console.error("Error fetching supplier or markup data", err);
     }
+
+    let cugMappings: any[] = [];
+    if (isAgent && agentId) {
+      try {
+        const CugMapping = require('../supplier/cugMapping.model').default;
+        cugMappings = await CugMapping.find({ agent: agentId, isActive: true }).lean();
+      } catch (e) {
+        console.error("Error fetching CUG Mappings", e);
+      }
+    }
+
+    const todayDate = new Date();
+    todayDate.setUTCHours(0,0,0,0);
+    const flightDate = new Date(targetDate);
+    flightDate.setUTCHours(0,0,0,0);
+    const daysAhead = Math.max(0, Math.floor((flightDate.getTime() - todayDate.getTime()) / 86400000));
+
+    const isFlightAllowedByCUG = (supplierObj: any, airlineCode: string) => {
+      if (!supplierObj) return true;
+      const supplierId = supplierObj._id;
+      const supplierCugEnabled = supplierObj.cugEnabled;
+
+      const mapping = cugMappings.find((m: any) => m.supplier.toString() === supplierId.toString());
+
+      if (supplierCugEnabled && !mapping) return false;
+
+      if (mapping) {
+        if (mapping.limitDay !== undefined && mapping.limitDay !== null && daysAhead > mapping.limitDay) {
+          return false;
+        }
+        if (mapping.restrictAirline) {
+          const blockedAirlines = mapping.restrictAirline.split(',').map((s: string) => s.trim().toUpperCase()).filter((s: string) => s);
+          if (blockedAirlines.includes(airlineCode.toUpperCase())) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    };
+
+    // Helper to calculate agent markup
+    const applyAgentMarkup = (basePrice: number) => {
+      let markupAmount = 0;
+      if (agentMarkupData) {
+        if (agentMarkupData.type === 'fixed') {
+          markupAmount = agentMarkupData.value;
+        } else if (agentMarkupData.type === 'percentage') {
+          markupAmount = (basePrice * agentMarkupData.value) / 100;
+        }
+        
+        // Enforce min/max if present
+        if (agentMarkupData.min && markupAmount < agentMarkupData.min) markupAmount = agentMarkupData.min;
+        if (agentMarkupData.max && markupAmount > agentMarkupData.max) markupAmount = agentMarkupData.max;
+      }
+      return Math.round(markupAmount * (adultCount + childCount));
+    };
 
     let searchResult;
     try {
@@ -164,9 +232,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
           cabinClass: offer.cabin_type,
           inputRequirements: searchResult._data.input_requirements,
           supplierId: nexusSupplier?._id, // Attach supplierId for pre-booking validation
-          agentCommission: finalCommission
+          agentCommission: finalCommission,
+          agentMarkup: 0
         };
       });
+
+      // Filter Nexus flights based on CUG mappings if searching as Agent
+      if (isAgent) {
+        flights = flights.filter(f => isFlightAllowedByCUG(nexusSupplier, f.airline));
+      }
     }
 
     // Merge active Series Fares matching route
@@ -188,7 +262,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
       // Fetch all active suppliers to match by name (supplierId in SF stores User._id, not Supplier._id)
       const allSuppliers = await Supplier.find({ isActive: true }).lean();
       
-      const sfMapped = seriesFares.map((sf: any) => {
+      let sfMapped = seriesFares.map((sf: any) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
         const depTime = `${dateStr}T${sf.departureTime}:00`;
         const arrTime = `${dateStr}T${sf.arrivalTime}:00`;
@@ -202,17 +276,23 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
 
         const basePrice = Math.round((sf.adtFare * adultCount) + (sf.chdFare * childCount) + (sf.infFare * infantCount));
         
-        let finalCommission = (sf.agentCommission || 0) * (adultCount + childCount); // Fallback to sf's agentCommission
+        let uploaderCommission = (sf.agentCommission || 0) * (adultCount + childCount);
+        let adminCommission = 0;
         // Match supplier by name (case-insensitive) since supplierId field stores User._id not Supplier._id
         const supplier = allSuppliers.find((s: any) => 
           s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
         );
         if (supplier && supplier.commission) {
           const percComm = (basePrice * supplier.commission.percentage) / 100;
-          finalCommission = Math.max(percComm, supplier.commission.fixedAmount);
+          adminCommission = Math.max(percComm, supplier.commission.fixedAmount);
         }
 
-        const price = basePrice + finalCommission; // Show total (Base + Commission) on search results page
+        const agentMarkupAmount = applyAgentMarkup(basePrice);
+        // Base Price + Uploader Profit (if any) + Admin Commission + Searching Agent's markup
+        const price = basePrice + uploaderCommission + adminCommission + agentMarkupAmount; 
+        
+        // Final agentCommission to pass to booking is what Admin & Uploader earn from this sale
+        const finalCommission = uploaderCommission + adminCommission;
 
         return {
           _id: `SF_${sf._id}`,
@@ -241,9 +321,22 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false)
           availableSeats: sf.availableSeats,
           baseFare: basePrice,
           agentCommission: finalCommission,
+          agentMarkup: agentMarkupAmount,
           commissionPerPassenger: finalCommission / (adultCount + childCount + infantCount),
-          supplierId: supplier ? supplier._id : null
+          supplierId: supplier ? supplier._id : null,
+          supplierObj: supplier // keep temporary object for CUG check
         };
+      });
+
+      // Filter Series Fares based on CUG mappings if searching as Agent
+      if (isAgent) {
+        sfMapped = sfMapped.filter((f: any) => isFlightAllowedByCUG(f.supplierObj, f.airline));
+      }
+
+      // Cleanup temporary object
+      sfMapped = sfMapped.map((f: any) => {
+        delete f.supplierObj;
+        return f;
       });
 
       flights = [...sfMapped, ...flights];
@@ -418,13 +511,15 @@ export const getNearestFlightsData = async (from: string, to: string, targetDate
 export const searchFlights = async (req: AuthRequest, res: Response) => {
   try {
     let isAgent = false;
+    let agentId = null;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded: any = jwt.verify(token, process.env.JWT_SECRET || '');
-        const user = await User.findById(decoded.id).select('role agentStatus');
-        if (user && (user.role === 'SUPER_ADMIN' || user.role === 'SUB_ADMIN' || (user.role === 'B2B_AGENT' && user.agentStatus === 'APPROVED'))) {
+        const user = await User.findById(decoded.id).select('roles agentStatus _id');
+        if (user && (user.roles.includes('SUPER_ADMIN') || user.roles.includes('SUB_ADMIN') || (user.roles.includes('B2B_AGENT') && user.agentStatus === 'APPROVED'))) {
           isAgent = true;
+          agentId = user._id;
         }
       } catch (e) {
         // Ignore token errors for public search
@@ -432,7 +527,7 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
     }
     console.log("✈️ Flight Search Request Received:", req.query);
 
-    const flights = await getFlightsData(req.query, isAgent);
+    const flights = await getFlightsData(req.query, isAgent, agentId);
     res.json(flights);
   } catch (error: any) {
     console.error("Flight Search Catch Error:", error);
@@ -464,10 +559,64 @@ export const checkFlightAvailability = async (req: AuthRequest, res: Response) =
 // @access  Public
 export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
   try {
+    let isAgent = false;
+    let agentId = null;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded: any = jwt.verify(token, process.env.JWT_SECRET || '');
+        const user = await User.findById(decoded.id).select('roles agentStatus _id');
+        if (user && (user.roles.includes('SUPER_ADMIN') || user.roles.includes('SUB_ADMIN') || (user.roles.includes('B2B_AGENT') && user.agentStatus === 'APPROVED'))) {
+          isAgent = true;
+          agentId = user._id;
+        }
+      } catch (e) {
+        // Ignore token errors
+      }
+    }
+
     const { origin, destination } = req.query;
     if (!origin || !destination) {
       return res.status(400).json({ message: "Origin and Destination are required" });
     }
+
+    let cugMappings: any[] = [];
+    if (isAgent && agentId) {
+      try {
+        const CugMapping = require('../supplier/cugMapping.model').default;
+        cugMappings = await CugMapping.find({ agent: agentId, isActive: true }).lean();
+      } catch (e) {
+        console.error("Error fetching CUG Mappings for calendar", e);
+      }
+    }
+
+    const todayDate = new Date();
+    todayDate.setUTCHours(0,0,0,0);
+
+    const isDateAllowedByCUG = (supplierObj: any, flightDateStr: string, airlineCode?: string) => {
+      if (!supplierObj) return true;
+      const supplierId = supplierObj._id;
+      const supplierCugEnabled = supplierObj.cugEnabled;
+
+      const mapping = cugMappings.find((m: any) => m.supplier.toString() === supplierId.toString());
+      if (supplierCugEnabled && !mapping) return false;
+
+      if (mapping) {
+        if (mapping.limitDay !== undefined && mapping.limitDay !== null) {
+          const fDate = new Date(flightDateStr);
+          fDate.setUTCHours(0,0,0,0);
+          const daysAhead = Math.max(0, Math.floor((fDate.getTime() - todayDate.getTime()) / 86400000));
+          if (daysAhead > mapping.limitDay) return false;
+        }
+        if (mapping.restrictAirline && airlineCode) {
+          const blockedAirlines = mapping.restrictAirline.split(',').map((s: string) => s.trim().toUpperCase()).filter((s: string) => s);
+          if (blockedAirlines.includes(airlineCode.toUpperCase())) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
 
     const originIata = getIataCode(origin as string);
     const destinationIata = getIataCode(destination as string);
@@ -516,6 +665,12 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
       const supplier = calSuppliers.find((s: any) => 
         s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
       );
+
+      // CUG Check
+      if (isAgent && !isDateAllowedByCUG(supplier, dateStr, sf.airline)) {
+        return; // Skip this series fare date
+      }
+
       if (supplier && supplier.commission) {
         const percComm = (sf.adtFare * supplier.commission.percentage) / 100;
         commission = Math.max(percComm, supplier.commission.fixedAmount);
@@ -539,6 +694,7 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
 
     // 3. Fetch from NexusDMC (only dates available)
     try {
+      const nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' });
       const { getAvailableDates } = require('../flights/nexusdmc.service');
       const nexusDatesResult = await getAvailableDates(originIata, destinationIata);
       
@@ -547,6 +703,10 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
       if (nexusDatesResult && nexusDatesResult.success && nexusDatesResult._data && nexusDatesResult._data.sector) {
         const dateList = nexusDatesResult._data.sector.date || [];
         dateList.forEach((dateStr: string) => {
+          // dateStr from Nexus is usually YYYY-MM-DD
+          if (isAgent && !isDateAllowedByCUG(nexusSupplier, dateStr)) {
+            return; // Skip this date
+          }
           if (!pricesMap[dateStr]) {
             pricesMap[dateStr] = -1; // -1 indicates available but price unknown
           }

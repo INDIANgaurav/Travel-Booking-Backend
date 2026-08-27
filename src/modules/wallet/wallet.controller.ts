@@ -2,8 +2,10 @@ import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import User from '../users/user.model';
 import Transaction from './wallet.model';
+import { OfflineTopUpRequest } from './offlineTopUp.model';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import { WithdrawalRequest } from './withdrawalRequest.model';
 
 // @desc    Get user wallet and transactions
 // @route   GET /api/wallet
@@ -158,3 +160,236 @@ export const verifyTopUpPayment = async (req: AuthRequest, res: Response) => {
   }
 };
 
+
+
+// @desc    Submit an offline topup request (Agent)
+// @route   POST /api/wallet/offline-topup
+// @access  Private (B2B Agent)
+export const submitOfflineTopUp = async (req: AuthRequest, res: Response) => {
+  try {
+    const { amount, paymentMode, referenceNumber, depositedBank, depositedAccountNo, chequeNumber, remarks } = req.body;
+    
+    if (!amount || !paymentMode) {
+      return res.status(400).json({ message: 'Amount and payment mode are required' });
+    }
+
+    const request = new OfflineTopUpRequest({
+      agentId: req.user._id,
+      amount: Number(amount),
+      paymentMode,
+      referenceNumber,
+      depositedBank,
+      depositedAccountNo,
+      chequeNumber,
+      remarks,
+      status: 'PENDING'
+    });
+
+    await request.save();
+    res.status(201).json({ message: 'Top-up request submitted successfully', request });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get all offline topup requests (Admin)
+// @route   GET /api/wallet/offline-topup
+// @access  Private (Admin)
+export const getOfflineTopUps = async (req: AuthRequest, res: Response) => {
+  try {
+    const { status } = req.query;
+    const filter: any = {};
+    if (status) filter.status = status;
+    
+    const requests = await OfflineTopUpRequest.find(filter)
+      .populate('agentId', 'name email agencyName agencyCode')
+      .populate('processedBy', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
+      
+    res.json(requests);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get logged in agent's offline topup requests
+// @route   GET /api/wallet/offline-topup/my-requests
+// @access  Private (B2B Agent)
+export const getMyOfflineTopUps = async (req: AuthRequest, res: Response) => {
+  try {
+    const requests = await OfflineTopUpRequest.find({ agentId: req.user._id })
+      .sort({ createdAt: -1 })
+      .lean();
+      
+    res.json(requests);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Approve offline topup request
+// @route   PUT /api/wallet/offline-topup/:id/approve
+// @access  Private (Admin)
+export const approveOfflineTopUp = async (req: AuthRequest, res: Response) => {
+  try {
+    const request = await OfflineTopUpRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ message: 'Request not found' });
+    if (request.status !== 'PENDING') return res.status(400).json({ message: 'Request already processed' });
+
+    const agent = await User.findById(request.agentId);
+    if (!agent) return res.status(404).json({ message: 'Agent not found' });
+
+    // Update wallet
+    agent.walletBalance += request.amount;
+    await agent.save();
+
+    // Create Transaction
+    await Transaction.create({
+      user: agent._id,
+      amount: request.amount,
+      type: 'CREDIT',
+      description: `Manual Top-Up (${request.paymentMode}) Approved. Ref: ${request.referenceNumber || request.chequeNumber || 'N/A'}`,
+      paymentMethod: request.paymentMode,
+      surcharge: 0
+    });
+
+    // Update Request
+    request.status = 'APPROVED';
+    request.processedBy = req.user._id;
+    request.processedAt = new Date();
+    await request.save();
+
+    res.json({ message: 'Request approved and wallet credited', request });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Reject offline topup request
+// @route   PUT /api/wallet/offline-topup/:id/reject
+// @access  Private (Admin)
+export const rejectOfflineTopUp = async (req: AuthRequest, res: Response) => {
+  try {
+    const request = await OfflineTopUpRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ message: 'Request not found' });
+    if (request.status !== 'PENDING') return res.status(400).json({ message: 'Request already processed' });
+
+    request.status = 'REJECTED';
+    request.processedBy = req.user._id;
+    request.processedAt = new Date();
+    await request.save();
+
+    res.json({ message: 'Request rejected', request });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// --- WITHDRAWAL REQUESTS ---
+
+// @desc    Submit withdrawal request
+// @route   POST /api/wallet/withdrawal-request
+// @access  Private (B2B Agent)
+export const submitWithdrawalRequest = async (req: AuthRequest, res: Response) => {
+  try {
+    const { amount, bankDetails } = req.body;
+    if (!amount || amount <= 0) return res.status(400).json({ message: 'Invalid amount' });
+    if (!bankDetails) return res.status(400).json({ message: 'Bank details required' });
+
+    const agent = await User.findById(req.user._id);
+    if (!agent) return res.status(404).json({ message: 'Agent not found' });
+    if (agent.walletBalance < amount) return res.status(400).json({ message: 'Insufficient wallet balance' });
+
+    // Deduct immediately to freeze funds
+    agent.walletBalance -= amount;
+    await agent.save();
+
+    const request = new WithdrawalRequest({
+      agentId: req.user._id,
+      amount,
+      bankDetails,
+    });
+    await request.save();
+
+    await Transaction.create({
+      user: agent._id,
+      amount,
+      type: 'DEBIT',
+      description: `Withdrawal Request Submitted (Pending Approval)`,
+      paymentMethod: 'BANK_TRANSFER'
+    });
+
+    res.status(201).json(request);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get logged in agent's withdrawal requests
+// @route   GET /api/wallet/withdrawal-requests
+// @access  Private (B2B Agent)
+export const getMyWithdrawalRequests = async (req: AuthRequest, res: Response) => {
+  try {
+    const requests = await WithdrawalRequest.find({ agentId: req.user._id }).sort({ createdAt: -1 }).lean();
+    res.json(requests);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get all withdrawal requests
+// @route   GET /api/wallet/admin/withdrawals
+// @access  Private (Admin)
+export const getAllWithdrawalRequests = async (req: AuthRequest, res: Response) => {
+  try {
+    const requests = await WithdrawalRequest.find()
+      .populate('agentId', 'name email agencyName')
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json(requests);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Update withdrawal request status
+// @route   PUT /api/wallet/admin/withdrawals/:id
+// @access  Private (Admin)
+export const updateWithdrawalRequest = async (req: AuthRequest, res: Response) => {
+  try {
+    const { status, adminRemarks } = req.body; // 'APPROVED' or 'REJECTED'
+    const request = await WithdrawalRequest.findById(req.params.id);
+    
+    if (!request) return res.status(404).json({ message: 'Request not found' });
+    if (request.status !== 'PENDING') return res.status(400).json({ message: `Request already ${request.status}` });
+
+    request.status = status;
+    request.adminRemarks = adminRemarks;
+    
+    if (status === 'REJECTED') {
+      // Refund the wallet
+      const agent = await User.findById(request.agentId);
+      if (agent) {
+        agent.walletBalance += request.amount;
+        await agent.save();
+        
+        await Transaction.create({
+          user: agent._id,
+          amount: request.amount,
+          type: 'CREDIT',
+          description: `Withdrawal Request Rejected (Refunded)`,
+          paymentMethod: 'BANK_TRANSFER'
+        });
+      }
+    } else if (status === 'APPROVED') {
+      // Wallet was already deducted, just log the final approval transaction if desired
+      // We can also just leave the original DEBIT transaction as it is, or update its description
+    }
+    
+    await request.save();
+    res.json(request);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};

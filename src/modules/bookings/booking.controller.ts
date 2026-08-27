@@ -65,29 +65,53 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
       let supplierDoc = null;
 
       if (supplierId && flightCostToSupplier > 0) {
-        supplierDoc = await Supplier.findById(supplierId).session(session);
-        if (!supplierDoc) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({ message: 'Linked supplier account not found' });
+        if (details?.isSeriesFare) {
+          // Internal Agent-Supplier (Series Fare)
+          // We owe them the Base Fare, so we CREDIT their wallet
+          const AgentSupplier = require('../users/user.model').default;
+          const WalletTransaction = require('../wallet/wallet.model').Transaction;
+          const agentSupplierDoc = await AgentSupplier.findById(supplierId).session(session);
+          
+          if (agentSupplierDoc) {
+            agentSupplierDoc.walletBalance += flightCostToSupplier;
+            await agentSupplierDoc.save({ session });
+            
+            await WalletTransaction.create([{
+              user: agentSupplierDoc._id,
+              type: 'CREDIT',
+              amount: flightCostToSupplier,
+              description: `Series Fare Sale Credit (Booking by User: ${req.user._id})`,
+              grossAmount: flightCostToSupplier,
+              netAmountDebited: 0
+            }], { session });
+          }
+        } else {
+          // External API Supplier (e.g. Nexus DMC)
+          // Admin pays them, so we DEDUCT from their prepaid balance
+          supplierDoc = await Supplier.findById(supplierId).session(session);
+          if (!supplierDoc) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({ message: 'Linked supplier account not found' });
+          }
+          if ((supplierDoc.balance + supplierDoc.creditLimit) < flightCostToSupplier) {
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(400).json({ message: 'System error: Unable to fulfill booking at this time (Supplier Funds Insufficient).' });
+          }
+          // Deduct from supplier balance
+          supplierDoc.balance -= flightCostToSupplier;
+          await supplierDoc.save({ session });
+          
+          // Record supplier transaction
+          const SupplierTransaction = require('../supplier/supplierTransaction.model').default;
+          await SupplierTransaction.create([{
+            supplierId: supplierDoc._id,
+            type: 'DEDUCTION',
+            amount: flightCostToSupplier,
+            description: `Flight Booking Deduction (User: ${req.user._id}, Amt: ${flightCostToSupplier})`
+          }], { session });
         }
-        if ((supplierDoc.balance + supplierDoc.creditLimit) < flightCostToSupplier) {
-          await session.abortTransaction();
-          session.endSession();
-          return res.status(400).json({ message: 'System error: Unable to fulfill booking at this time (Supplier Funds Insufficient).' });
-        }
-        // Deduct from supplier balance
-        supplierDoc.balance -= flightCostToSupplier;
-        await supplierDoc.save({ session });
-        
-        // Record supplier transaction
-        const SupplierTransaction = require('../supplier/supplierTransaction.model').default;
-        await SupplierTransaction.create([{
-          supplierId: supplierDoc._id,
-          type: 'DEDUCTION',
-          amount: flightCostToSupplier,
-          description: `Flight Booking Deduction (User: ${req.user._id}, Amt: ${flightCostToSupplier})`
-        }], { session });
       }
 
       const user = await User.findOneAndUpdate(
@@ -248,18 +272,31 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
             pnr: newBooking.bookingId
           }], { session: refundSession });
           
-          // 2. Rollback Supplier Wallet
+          // 2. Rollback Supplier/Agent Wallet
           if (supplierId && flightCostToSupplier > 0) {
-            const Supplier = require('../supplier/supplier.model').default;
-            const SupplierTransaction = require('../supplier/supplierTransaction.model').default;
-            
-            await Supplier.findByIdAndUpdate(supplierId, { $inc: { balance: flightCostToSupplier } }, { session: refundSession });
-            await SupplierTransaction.create([{
-              supplierId,
-              type: 'REFUND',
-              amount: flightCostToSupplier,
-              description: `Auto-Refund for failed Flight Booking: ${newBooking.bookingId}`
-            }], { session: refundSession });
+            if (details?.isSeriesFare) {
+              const AgentSupplier = require('../users/user.model').default;
+              const WalletTransaction = require('../wallet/wallet.model').Transaction;
+              await AgentSupplier.findByIdAndUpdate(supplierId, { $inc: { walletBalance: -flightCostToSupplier } }, { session: refundSession });
+              await WalletTransaction.create([{
+                user: supplierId,
+                type: 'DEBIT',
+                amount: flightCostToSupplier,
+                description: `Series Fare Sale Rollback (Booking Failed)`,
+                grossAmount: flightCostToSupplier,
+                netAmountDebited: flightCostToSupplier
+              }], { session: refundSession });
+            } else {
+              const Supplier = require('../supplier/supplier.model').default;
+              const SupplierTransaction = require('../supplier/supplierTransaction.model').default;
+              await Supplier.findByIdAndUpdate(supplierId, { $inc: { balance: flightCostToSupplier } }, { session: refundSession });
+              await SupplierTransaction.create([{
+                supplierId,
+                type: 'REFUND',
+                amount: flightCostToSupplier,
+                description: `Flight Booking Rollback (Failed API Call, Amt: ${flightCostToSupplier})`
+              }], { session: refundSession });
+            }
           }
 
           newBooking.status = 'FAILED';
@@ -604,8 +641,8 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
     }
 
     // Allow if user is admin, sub_admin, supplier_agent OR if user owns the booking
-    const allowedRoles = ['SUPER_ADMIN', 'SUB_ADMIN', 'SUPPLIER_AGENT'];
-    if (!allowedRoles.includes(req.user.role) && booking.user._id.toString() !== req.user._id.toString()) {
+    const allowedRoles = ['SUPER_ADMIN', 'SUB_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'];
+    if (!req.user.roles.some((role: string) => allowedRoles.includes(role)) && booking.user._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to view this booking' });
     }
 

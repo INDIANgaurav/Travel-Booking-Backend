@@ -3,9 +3,9 @@ import { AuthRequest } from './auth.middleware';
 
 export const authorizeRoles = (...roles: string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || !req.user.roles || !req.user.roles.some((role: string) => roles.includes(role))) {
       return res.status(403).json({
-        message: `User role ${req.user ? req.user.role : 'Unknown'} is not authorized to access this route`,
+        message: `User roles ${req.user ? req.user.roles.join(', ') : 'Unknown'} are not authorized to access this route`,
       });
     }
     next();
@@ -14,11 +14,11 @@ export const authorizeRoles = (...roles: string[]) => {
 
 export const authorizeDepartments = (...departments: (string | null)[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (req.user.role === 'SUPER_ADMIN') {
+    if (req.user.roles.includes('SUPER_ADMIN')) {
       return next();
     }
     
-    if (req.user.role !== 'SUB_ADMIN' || !departments.includes(req.user.department)) {
+    if (!req.user.roles.includes('SUB_ADMIN') || !departments.includes(req.user.department)) {
       return res.status(403).json({
         message: `User department ${req.user.department || 'None'} is not authorized to access this route`,
       });

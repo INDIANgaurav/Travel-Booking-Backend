@@ -3,14 +3,18 @@ import User from './user.model';
 
 export const getUsers = async (req: Request, res: Response) => {
   try {
-    const filter: any = { role: { $ne: 'SUPER_ADMIN' } };
+    const filter: any = { roles: { $ne: 'SUPER_ADMIN' } };
     if (req.query.role && req.query.role !== 'SUPER_ADMIN') {
       const roles = (req.query.role as string).split(',');
       if (roles.length > 1) {
-        filter.role = { $in: roles };
+        filter.roles = { $in: roles };
       } else {
-        filter.role = req.query.role;
+        filter.roles = req.query.role;
       }
+    }
+    
+    if (req.query.agentStatus) {
+      filter.agentStatus = req.query.agentStatus;
     }
     
     const page = parseInt(req.query.page as string) || 1;
@@ -72,7 +76,7 @@ export const approveAgent = async (req: Request, res: Response) => {
     const { status } = req.body; // 'APPROVED' | 'REJECTED'
     const agent = await User.findById(agentId);
 
-    if (!agent || agent.role !== 'B2B_AGENT') {
+    if (!agent || !agent.roles.includes('B2B_AGENT')) {
       return res.status(404).json({ message: 'Agent not found' });
     }
 
@@ -90,29 +94,58 @@ export const approveAgent = async (req: Request, res: Response) => {
   }
 };
 
+export const getUserById = async (req: Request, res: Response) => {
+  try {
+    const user = await User.findById(req.params.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(user);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const updateUser = async (req: Request, res: Response) => {
   try {
-    const { role, department, name, phone, companyName, isActive, agentStatus } = req.body;
+    const { 
+      role, roles, department, name, phone, companyName, isActive, agentStatus,
+      creditBalance, resultExpiryTime, otpTime, requiredTravelDate, 
+      extendedDomain, irctcAgentId, displayOnProfileIcon, referredBy, reportingTo
+    } = req.body;
     const user = await User.findById(req.params.id);
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    user.role = role || user.role;
-    user.department = role === 'SUB_ADMIN' ? (department !== undefined ? department : user.department) : null;
+    if (roles && Array.isArray(roles)) {
+      user.roles = roles;
+    } else if (role) {
+      user.roles = [role];
+    }
+    user.department = (roles?.includes('SUB_ADMIN') || role === 'SUB_ADMIN') ? (department !== undefined ? department : user.department) : null;
     if (name) user.name = name;
     if (phone !== undefined) user.phone = phone;
     if (companyName !== undefined) user.companyName = companyName;
     if (isActive !== undefined) user.isActive = isActive;
     if (agentStatus !== undefined) user.agentStatus = agentStatus;
+    if (creditBalance !== undefined) user.creditBalance = creditBalance;
+    if (resultExpiryTime !== undefined) user.resultExpiryTime = resultExpiryTime;
+    if (otpTime !== undefined) user.otpTime = otpTime;
+    if (requiredTravelDate !== undefined) user.requiredTravelDate = requiredTravelDate;
+    if (extendedDomain !== undefined) user.extendedDomain = extendedDomain;
+    if (irctcAgentId !== undefined) user.irctcAgentId = irctcAgentId;
+    if (displayOnProfileIcon !== undefined) user.displayOnProfileIcon = displayOnProfileIcon;
+    if (referredBy !== undefined) user.referredBy = referredBy;
+    if (reportingTo !== undefined) user.reportingTo = reportingTo;
 
     await user.save();
 
     res.json({
       _id: user._id,
       name: user.name,
-      role: user.role,
+      roles: user.roles,
       department: user.department,
       isActive: user.isActive,
       agentStatus: user.agentStatus
@@ -139,7 +172,7 @@ export const createSubAdmin = async (req: Request, res: Response) => {
       email,
       phone,
       password,
-      role: 'SUB_ADMIN',
+      roles: ['SUB_ADMIN'],
       department,
       isApproved: true,
       isEmailVerified: true,
@@ -150,7 +183,7 @@ export const createSubAdmin = async (req: Request, res: Response) => {
       _id: subAdmin.id,
       name: subAdmin.name,
       email: subAdmin.email,
-      role: subAdmin.role,
+      roles: subAdmin.roles,
       department: subAdmin.department,
     });
   } catch (error: any) {
@@ -175,7 +208,7 @@ export const createAgent = async (req: Request, res: Response) => {
       email,
       phone,
       password,
-      role: 'B2B_AGENT',
+      roles: ['B2B_AGENT'],
       companyName,
       isApproved: true,
       isEmailVerified: true,
@@ -186,7 +219,7 @@ export const createAgent = async (req: Request, res: Response) => {
       _id: agent.id,
       name: agent.name,
       email: agent.email,
-      role: agent.role,
+      roles: agent.roles,
       companyName: agent.companyName,
     });
   } catch (error: any) {
@@ -202,7 +235,7 @@ export const deleteUser = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    if (user.role === 'SUPER_ADMIN') {
+    if (user.roles.includes('SUPER_ADMIN')) {
       return res.status(403).json({ message: 'Cannot delete a SUPER_ADMIN' });
     }
     

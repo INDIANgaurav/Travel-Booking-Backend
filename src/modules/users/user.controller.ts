@@ -41,6 +41,14 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
       if (req.body.passportExpiry !== undefined) user.passportExpiry = req.body.passportExpiry || undefined;
       if (req.body.issuingCountry !== undefined) user.issuingCountry = req.body.issuingCountry;
       if (req.body.panNumber !== undefined) user.panNumber = req.body.panNumber;
+      if (req.body.resultExpiryTime !== undefined) user.resultExpiryTime = req.body.resultExpiryTime;
+      if (req.body.otpTime !== undefined) user.otpTime = req.body.otpTime;
+      if (req.body.requiredTravelDate !== undefined) user.requiredTravelDate = req.body.requiredTravelDate;
+      if (req.body.extendedDomain !== undefined) user.extendedDomain = req.body.extendedDomain;
+      if (req.body.irctcAgentId !== undefined) user.irctcAgentId = req.body.irctcAgentId;
+      if (req.body.displayOnProfileIcon !== undefined) user.displayOnProfileIcon = req.body.displayOnProfileIcon;
+      if (req.body.referredBy !== undefined) user.referredBy = req.body.referredBy;
+      if (req.body.reportingTo !== undefined) user.reportingTo = req.body.reportingTo;
 
       // Note: We don't update email here usually, or if we do, we need to re-verify
       if (req.body.email && req.body.email !== user.email) {
@@ -56,7 +64,7 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
         email: updatedUser.email,
         phone: updatedUser.phone,
         avatar: updatedUser.avatar,
-        role: updatedUser.role,
+        roles: updatedUser.roles,
         isEmailVerified: updatedUser.isEmailVerified,
         firstName: updatedUser.firstName,
         lastName: updatedUser.lastName,
@@ -72,6 +80,15 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
         companyRole: updatedUser.companyRole,
         employeeSize: updatedUser.employeeSize,
         gstn: updatedUser.gstn,
+        creditBalance: updatedUser.creditBalance,
+        resultExpiryTime: updatedUser.resultExpiryTime,
+        otpTime: updatedUser.otpTime,
+        requiredTravelDate: updatedUser.requiredTravelDate,
+        extendedDomain: updatedUser.extendedDomain,
+        irctcAgentId: updatedUser.irctcAgentId,
+        displayOnProfileIcon: updatedUser.displayOnProfileIcon,
+        referredBy: updatedUser.referredBy,
+        reportingTo: updatedUser.reportingTo,
       });
     } else {
       res.status(404).json({ message: 'User not found' });
@@ -167,7 +184,7 @@ export const submitAgentOnboarding = async (req: AuthRequest, res: Response) => 
       return res.status(404).json({ message: 'User not found' });
     }
 
-    if (user.role !== 'B2B_AGENT') {
+    if (!user.roles.includes('B2B_AGENT')) {
       return res.status(403).json({ message: 'Only Travel Agents can perform this action' });
     }
 
@@ -195,7 +212,7 @@ export const submitAgentOnboarding = async (req: AuthRequest, res: Response) => 
 export const getSupplierStaff = async (req: AuthRequest, res: Response) => {
   try {
     const users = await User.find({ 
-      role: 'SUPPLIER_STAFF', 
+      roles: { $in: ['SUPPLIER_STAFF'] }, 
       supplierOwnerId: req.user._id
     }).lean();
     res.json(users);
@@ -221,7 +238,7 @@ export const addSupplierStaff = async (req: AuthRequest, res: Response) => {
       email,
       phone,
       password,
-      role: 'SUPPLIER_STAFF',
+      roles: ['SUPPLIER_STAFF'],
       supplierOwnerId: req.user._id,
       companyName: req.user.companyName,
       agentStatus: 'APPROVED',

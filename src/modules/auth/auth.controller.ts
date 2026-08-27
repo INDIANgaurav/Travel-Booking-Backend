@@ -33,7 +33,7 @@ export const registerUser = async (req: Request, res: Response) => {
       email,
       phone,
       password,
-      role: role || 'USER',
+      roles: [role || 'USER'],
       department: role === 'SUB_ADMIN' ? department : null,
       companyName: role === 'B2B_AGENT' ? companyName : null,
       agentStatus
@@ -44,7 +44,7 @@ export const registerUser = async (req: Request, res: Response) => {
         _id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
+        roles: user.roles,
         department: user.department,
         agentStatus: user.agentStatus,
         token: generateToken(user.id),
@@ -93,7 +93,7 @@ export const registerAgent = async (req: Request, res: Response) => {
       email,
       phone,
       password: password || 'Agent@123',
-      role: 'SUPPLIER_AGENT',
+      roles: ['SUPPLIER_AGENT'],
       companyName,
       officeAddress,
       state,
@@ -130,7 +130,7 @@ export const loginUser = async (req: Request, res: Response) => {
         return res.status(401).json({ message: 'Account has been deactivated', status: 'INACTIVE' });
       }
 
-      if ((user.role === 'B2B_AGENT' || user.role === 'SUPPLIER_AGENT') && user.agentStatus !== 'APPROVED') {
+      if ((user.roles.includes('B2B_AGENT') || user.roles.includes('SUPPLIER_AGENT')) && user.agentStatus !== 'APPROVED') {
         return res.status(401).json({ 
           message: 'Your registration is pending approval from Admin.', 
           status: user.agentStatus || 'PENDING_APPROVAL' 
@@ -141,7 +141,7 @@ export const loginUser = async (req: Request, res: Response) => {
         _id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
+        roles: user.roles,
         department: user.department,
         companyName: user.companyName,
         supplierOwnerId: user.supplierOwnerId,
@@ -179,8 +179,12 @@ export const googleAuth = async (req: Request, res: Response) => {
     let user = await User.findOne({ email });
 
     if (user) {
-      if (role === 'B2B_AGENT' && user.role !== 'B2B_AGENT') {
-        return res.status(400).json({ message: 'This Google account is already registered as a standard User. Please use a different email to register as an Agent.' });
+      if (role && !user.roles.includes(role)) {
+        user.roles.push(role);
+        if (role === 'B2B_AGENT' && !user.agentStatus) {
+          user.agentStatus = 'PENDING';
+        }
+        await user.save();
       }
     } else {
       // Create a new user if they don't exist
@@ -192,7 +196,7 @@ export const googleAuth = async (req: Request, res: Response) => {
       user = await User.create({
         name: name || 'User',
         email,
-        role: role || 'USER',
+        roles: [role || 'USER'],
         avatar: picture || '',
         isEmailVerified: true,
         agentStatus
@@ -203,7 +207,7 @@ export const googleAuth = async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Account has been deactivated', status: 'INACTIVE' });
     }
 
-    if (user.role === 'B2B_AGENT' && user.agentStatus !== 'APPROVED') {
+    if (user.roles.includes('B2B_AGENT') && user.agentStatus !== 'APPROVED') {
       return res.status(401).json({ message: 'Agent account pending approval', status: 'PENDING' });
     }
 
@@ -212,7 +216,7 @@ export const googleAuth = async (req: Request, res: Response) => {
       _id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role,
+      roles: user.roles,
       department: user.department,
       agentStatus: user.agentStatus,
       avatar: user.avatar,

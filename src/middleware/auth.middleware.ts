@@ -26,7 +26,7 @@ export const protect = async (req: AuthRequest, res: Response, next: NextFunctio
 };
 
 export const isAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
-  if (req.user && req.user.role === 'SUPER_ADMIN') {
+  if (req.user && req.user.roles && req.user.roles.includes('SUPER_ADMIN')) {
     next();
   } else {
     res.status(403).json({ message: 'Not authorized as an admin' });
@@ -34,7 +34,7 @@ export const isAdmin = (req: AuthRequest, res: Response, next: NextFunction) => 
 };
 
 export const isAdminOrSubAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
-  if (req.user && (req.user.role === 'SUPER_ADMIN' || req.user.role === 'SUB_ADMIN')) {
+  if (req.user && req.user.roles && (req.user.roles.includes('SUPER_ADMIN') || req.user.roles.includes('SUB_ADMIN'))) {
     next();
   } else {
     res.status(403).json({ message: 'Not authorized for this action' });

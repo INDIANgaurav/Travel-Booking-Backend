@@ -23,6 +23,8 @@ export interface ISeriesFare extends Document {
   availableSeats: number;
   realtimeBook: boolean;
   status: 'Active' | 'Inactive' | 'SoldOut';
+  isArchived: boolean;
+  connectionId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,6 +44,7 @@ const seriesFareSchema = new Schema<ISeriesFare>(
     arrivalTime: { type: String, required: true },
     departureTerminal: { type: String, default: '' },
     arrivalTerminal: { type: String, default: '' },
+    connectionId: { type: String },
     travelDate: { type: Date, required: true },
     adtFare: { type: Number, required: true },
     chdFare: { type: Number, required: true, default: 0 },
@@ -51,6 +54,7 @@ const seriesFareSchema = new Schema<ISeriesFare>(
     availableSeats: { type: Number, required: true, default: 10 },
     realtimeBook: { type: Boolean, default: true },
     status: { type: String, enum: ['Active', 'Inactive', 'SoldOut'], default: 'Active' },
+    isArchived: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -60,6 +64,7 @@ seriesFareSchema.index({ travelDate: 1 });
 seriesFareSchema.index({ supplierId: 1, status: 1 });
 seriesFareSchema.index({ airline: 1 });
 seriesFareSchema.index({ status: 1 });
+seriesFareSchema.index({ isArchived: 1 });
 
 const SeriesFare = mongoose.model<ISeriesFare>('SeriesFare', seriesFareSchema);
 export default SeriesFare;
