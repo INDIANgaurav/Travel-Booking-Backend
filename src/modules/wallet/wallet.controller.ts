@@ -393,3 +393,53 @@ export const updateWithdrawalRequest = async (req: AuthRequest, res: Response) =
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Admin manually recharge an agent's wallet
+// @route   POST /api/wallet/admin/recharge
+// @access  Private (Admin)
+export const adminRechargeWallet = async (req: AuthRequest, res: Response) => {
+  try {
+    const { agencyId, amount, paymentMode, processingFee, remarks } = req.body;
+
+    if (!agencyId || !amount) {
+      return res.status(400).json({ message: 'Agency ID and Amount are required' });
+    }
+
+    const targetUser = await User.findById(agencyId);
+    if (!targetUser) {
+      return res.status(404).json({ message: 'Agency/User not found' });
+    }
+
+    const numericAmount = Number(amount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid amount' });
+    }
+
+    const numericFee = Number(processingFee || 0);
+    const totalCredit = numericAmount + numericFee;
+
+    // Update user wallet balance
+    targetUser.walletBalance = (targetUser.walletBalance || 0) + totalCredit;
+    await targetUser.save();
+
+    // Log transaction
+    const transaction = new Transaction({
+      user: targetUser._id,
+      amount: totalCredit,
+      type: 'CREDIT',
+      description: `Wallet recharge via ${paymentMode || 'Admin'} - ${remarks || ''}`.trim(),
+      balanceAfter: targetUser.walletBalance,
+      referenceId: `ADM-RECHARGE-${Date.now()}`,
+    });
+    await transaction.save();
+
+    res.json({
+      message: 'Wallet recharged successfully',
+      walletBalance: targetUser.walletBalance,
+      transaction
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+

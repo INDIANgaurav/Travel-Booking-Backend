@@ -230,17 +230,45 @@ export const createAgent = async (req: Request, res: Response) => {
 export const deleteUser = async (req: Request, res: Response) => {
   try {
     const user = await User.findById(req.params.id);
-    
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
+
     if (user.roles.includes('SUPER_ADMIN')) {
-      return res.status(403).json({ message: 'Cannot delete a SUPER_ADMIN' });
+      return res.status(403).json({ message: 'Cannot delete SUPER_ADMIN' });
     }
-    
-    await User.deleteOne({ _id: user._id });
-    res.json({ message: 'User removed successfully' });
+
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: 'User deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+import { OfflineTopUpRequest } from '../wallet/offlineTopUp.model';
+import { WithdrawalRequest } from '../wallet/withdrawalRequest.model';
+import { OfflineBooking } from '../bookings/offlineBooking.model';
+
+export const getPendingQueue = async (req: Request, res: Response) => {
+  try {
+    const agents = await User.find({ agentStatus: 'PENDING' }).select('name email phone createdAt companyName').lean();
+    const topups = await OfflineTopUpRequest.find({ status: 'PENDING' }).populate('user', 'name companyName').lean();
+    const withdrawals = await WithdrawalRequest.find({ status: 'PENDING' }).populate('user', 'name companyName').lean();
+    const offlineBookings = await OfflineBooking.find({ status: 'PENDING' }).populate('user', 'name companyName').lean();
+
+    res.json({
+      agents,
+      topups,
+      withdrawals,
+      offlineBookings,
+      summary: {
+        agents: agents.length,
+        topups: topups.length,
+        withdrawals: withdrawals.length,
+        offlineBookings: offlineBookings.length,
+        total: agents.length + topups.length + withdrawals.length + offlineBookings.length
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

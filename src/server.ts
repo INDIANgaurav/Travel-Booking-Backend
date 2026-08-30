@@ -31,6 +31,9 @@ import creditNoteRoutes from './modules/wallet/creditNote.routes';
 import accountStatementRoutes from './modules/wallet/accountStatement.routes';
 import aiRoutes from './modules/ai/ai.routes';
 import supplierRoutes from './modules/supplier/supplier.routes';
+import settingsRoutes from './modules/settings/settings.routes';
+import reportRoutes from './modules/reports/reports.routes';
+import financeRoutes from './modules/wallet/finance.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
@@ -84,6 +87,9 @@ app.use('/api/credit-notes', creditNoteRoutes);
 app.use('/api/account-statement', accountStatementRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/suppliers', supplierRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/finance', financeRoutes);
 
 // Global Error Handler to catch [object Object] issues
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

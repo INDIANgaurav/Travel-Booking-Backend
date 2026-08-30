@@ -1,5 +1,5 @@
 import express from 'express';
-import { getWallet, addMoney, createTopUpOrder, verifyTopUpPayment, submitOfflineTopUp, getOfflineTopUps, approveOfflineTopUp, rejectOfflineTopUp, getMyOfflineTopUps, submitWithdrawalRequest, getMyWithdrawalRequests, getAllWithdrawalRequests, updateWithdrawalRequest } from './wallet.controller';
+import { getWallet, addMoney, createTopUpOrder, verifyTopUpPayment, submitOfflineTopUp, getOfflineTopUps, approveOfflineTopUp, rejectOfflineTopUp, getMyOfflineTopUps, submitWithdrawalRequest, getMyWithdrawalRequests, getAllWithdrawalRequests, updateWithdrawalRequest, adminRechargeWallet } from './wallet.controller';
 import { protect, isAdminOrSubAdmin } from '../../middleware/auth.middleware';
 
 const router = express.Router();
@@ -17,6 +17,9 @@ router.get('/offline-topup/my-requests', getMyOfflineTopUps);
 router.get('/offline-topup', isAdminOrSubAdmin, getOfflineTopUps);
 router.put('/offline-topup/:id/approve', isAdminOrSubAdmin, approveOfflineTopUp);
 router.put('/offline-topup/:id/reject', isAdminOrSubAdmin, rejectOfflineTopUp);
+
+// Admin Direct Wallet Recharge
+router.post('/admin/recharge', isAdminOrSubAdmin, adminRechargeWallet);
 
 // Withdrawal Request Routes
 router.post('/withdrawal-request', submitWithdrawalRequest);

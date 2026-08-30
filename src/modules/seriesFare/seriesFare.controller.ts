@@ -607,12 +607,14 @@ export const toggleArchiveStatus = async (req: AuthRequest, res: Response) => {
 export const getSlowMovingSectors = async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date();
-    const nextWeek = new Date();
+    today.setHours(0, 0, 0, 0);
+    const nextWeek = new Date(today);
     nextWeek.setDate(today.getDate() + 7);
+    nextWeek.setHours(23, 59, 59, 999);
 
     const sectors = await SeriesFare.find({
       status: 'Active',
-      isArchived: false,
+      isArchived: { $ne: true },
       travelDate: { $gte: today, $lte: nextWeek }
     });
 
@@ -636,7 +638,8 @@ export const getSlowMovingSectors = async (req: AuthRequest, res: Response) => {
         soldSeats: sold,
         sellPercent: Math.round(sellPercent),
         pnr: sector.airlinePnr,
-        price: sector.adtFare
+        price: sector.adtFare,
+        supplierName: sector.supplierName
       };
     });
     slowMoving.sort((a, b) => a.daysToDeparture - b.daysToDeparture);
