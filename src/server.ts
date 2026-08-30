@@ -34,6 +34,7 @@ import supplierRoutes from './modules/supplier/supplier.routes';
 import settingsRoutes from './modules/settings/settings.routes';
 import reportRoutes from './modules/reports/reports.routes';
 import financeRoutes from './modules/wallet/finance.routes';
+import commissionRoutes from './modules/commissions/commission.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
@@ -90,6 +91,7 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/finance', financeRoutes);
+app.use('/api/commissions', commissionRoutes);
 
 // Global Error Handler to catch [object Object] issues
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

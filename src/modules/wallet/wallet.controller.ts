@@ -343,7 +343,8 @@ export const getMyWithdrawalRequests = async (req: AuthRequest, res: Response) =
 // @access  Private (Admin)
 export const getAllWithdrawalRequests = async (req: AuthRequest, res: Response) => {
   try {
-    const requests = await WithdrawalRequest.find()
+    const query = req.query.status ? { status: req.query.status } : {};
+    const requests = await WithdrawalRequest.find(query)
       .populate('agentId', 'name email agencyName')
       .sort({ createdAt: -1 })
       .lean();
