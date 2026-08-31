@@ -40,3 +40,11 @@ export const isAdminOrSubAdmin = (req: AuthRequest, res: Response, next: NextFun
     res.status(403).json({ message: 'Not authorized for this action' });
   }
 };
+
+export const isAdminOrSubAdminOrSupplier = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (req.user && req.user.roles && (req.user.roles.includes('SUPER_ADMIN') || req.user.roles.includes('SUB_ADMIN') || req.user.roles.includes('SUPPLIER_AGENT') || req.user.roles.includes('SUPPLIER_STAFF'))) {
+    next();
+  } else {
+    res.status(403).json({ message: 'Not authorized for this action' });
+  }
+};

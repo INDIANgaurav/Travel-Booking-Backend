@@ -37,10 +37,24 @@ export const getMyBookings = async (req: AuthRequest, res: Response) => {
 export const createFlightBooking = async (req: AuthRequest, res: Response) => {
   let session;
   try {
-    const { totalAmount, details, date, bookingMode = 'PERSONAL', paymentMethod = 'RAZORPAY', idempotencyKey } = req.body;
+    const { totalAmount, details, date, bookingMode = 'PERSONAL', paymentMethod = 'RAZORPAY', idempotencyKey, promoCode } = req.body;
 
     if (!totalAmount || totalAmount <= 0) {
       return res.status(400).json({ message: 'Invalid total amount' });
+    }
+
+    let finalPromoCode = null;
+    let finalDiscountAmount = 0;
+
+    if (promoCode) {
+      const PromoCodeModel = require('../promos/promo.model').default;
+      const promo = await PromoCodeModel.findOne({ code: promoCode.toUpperCase(), isActive: true });
+      if (promo && (promo.maxUses === 0 || promo.usedCount < promo.maxUses)) {
+        finalPromoCode = promo.code;
+        finalDiscountAmount = promo.discountType === 'FLAT' ? promo.discountAmount : (totalAmount * (promo.discountAmount / 100));
+        promo.usedCount += 1;
+        await promo.save();
+      }
     }
 
     if (paymentMethod === 'WALLET') {
@@ -134,6 +148,8 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
         paymentMethod,
         status: 'TICKETING_IN_PROGRESS',
         totalAmount,
+        promoCodeApplied: finalPromoCode,
+        discountAmount: finalDiscountAmount,
         date,
         details,
         idempotencyKey
@@ -348,6 +364,8 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
       bookingMode,
       status: 'PAYMENT_PENDING',
       totalAmount,
+      promoCodeApplied: finalPromoCode,
+      discountAmount: finalDiscountAmount,
       date,
       details,
       razorpayOrderId: order.id,

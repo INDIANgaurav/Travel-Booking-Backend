@@ -20,7 +20,8 @@ import {
   bulkConnectFares,
   bulkDeleteFares,
   runAutoSync,
-  populateSectors
+  populateSectors,
+  getSeriesFareSeats
 } from './seriesFare.controller';
 import { protect } from '../../middleware/auth.middleware';
 import { authorizeRoles } from '../../middleware/rbac.middleware';
@@ -55,5 +56,8 @@ router.put('/:id/archive', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGEN
 router.route('/:id')
   .put(protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), updateSeriesFare)
   .delete(protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), deleteSeriesFare);
+
+// Public: real-time seat availability (used on booking page checkout)
+router.get('/:id/seats', getSeriesFareSeats);
 
 export default router;

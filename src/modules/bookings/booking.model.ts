@@ -13,6 +13,8 @@ export interface IBooking extends Document {
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   razorpaySignature?: string;
+  promoCodeApplied?: string;
+  discountAmount?: number;
 
   // Cancellation Fields
   cancellationReason?: string;
@@ -59,6 +61,8 @@ const bookingSchema = new Schema<IBooking>(
     bookingMode: { type: String, enum: ['PERSONAL', 'MYBIZ'], default: 'PERSONAL' },
     paymentMethod: { type: String, enum: ['RAZORPAY', 'WALLET'], default: 'RAZORPAY' },
     totalAmount: { type: Number, required: true },
+    promoCodeApplied: { type: String, default: null },
+    discountAmount: { type: Number, default: 0 },
     date: { type: String, required: true },
     
     razorpayOrderId: { type: String },

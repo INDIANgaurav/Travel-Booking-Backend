@@ -625,8 +625,10 @@ export const getSlowMovingSectors = async (req: AuthRequest, res: Response) => {
     }).map(sector => {
       const sold = sector.totalSeats - sector.availableSeats;
       const sellPercent = (sold / (sector.totalSeats || 1)) * 100;
-      const diffTime = Math.abs(sector.travelDate.getTime() - today.getTime());
-      const daysToDeparture = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const tDate = new Date(sector.travelDate);
+      tDate.setHours(0, 0, 0, 0);
+      const diffTime = tDate.getTime() - today.getTime();
+      const daysToDeparture = Math.round(diffTime / (1000 * 60 * 60 * 24));
       return {
         id: sector._id,
         sfId: sector.sfId,
@@ -764,6 +766,53 @@ export const populateSectors = async (req: AuthRequest, res: Response) => {
       count++;
     }
     res.json({ message: 'Sector population complete. Updated ' + count + ' records.' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get real-time seat map for a Series Fare flight
+// @route   GET /api/series-fares/:id/seats  (public - no auth needed for checkout)
+// @access  Public
+export const getSeriesFareSeats = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Find by _id or sfId
+    const sf = await SeriesFare.findOne({
+      $or: [{ _id: id.length === 24 ? id : null }, { sfId: id }]
+    }).select('totalSeats availableSeats sfId airlinePnr origin destination travelDate airline flightNo').lean() as any;
+
+    if (!sf) return res.status(404).json({ message: 'Series Fare not found' });
+
+    // Fetch all confirmed bookings for this SF flight to get booked seat numbers
+    const Booking = require('../bookings/booking.model').default;
+    const bookings = await Booking.find({
+      status: { $in: ['CONFIRMED', 'TICKETING_IN_PROGRESS'] },
+      'details.flight_keys': { $in: [`SF_${sf.sfId}`, sf.sfId, id] }
+    }).select('details.seats').lean();
+
+    // Collect all booked seat IDs
+    const bookedSeats: string[] = [];
+    bookings.forEach((b: any) => {
+      if (b.details?.seats && Array.isArray(b.details.seats)) {
+        bookedSeats.push(...b.details.seats);
+      }
+    });
+
+    res.json({
+      totalSeats: sf.totalSeats,
+      availableSeats: sf.availableSeats,
+      bookedSeats: [...new Set(bookedSeats)], // deduplicate
+      sfInfo: {
+        sfId: sf.sfId,
+        airline: sf.airline,
+        flightNo: sf.flightNo,
+        origin: sf.origin,
+        destination: sf.destination,
+        travelDate: sf.travelDate,
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
