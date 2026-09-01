@@ -97,7 +97,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     let nexusSupplier: any = null;
     let agentMarkupData: any = null;
     try {
-      nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' });
+      nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' }).lean();
       
       // Fetch agent's active flight markup if logged in
       if (isAgent && agentId) {
@@ -237,10 +237,8 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         };
       });
 
-      // Filter Nexus flights based on CUG mappings if searching as Agent
-      if (isAgent) {
-        flights = flights.filter(f => isFlightAllowedByCUG(nexusSupplier, f.airline));
-      }
+      // Filter Nexus flights based on CUG mappings for everyone (B2C and B2B)
+      flights = flights.filter(f => isFlightAllowedByCUG(nexusSupplier, f.airline));
     }
 
     // Merge active Series Fares matching route
@@ -328,10 +326,8 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         };
       });
 
-      // Filter Series Fares based on CUG mappings if searching as Agent
-      if (isAgent) {
-        sfMapped = sfMapped.filter((f: any) => isFlightAllowedByCUG(f.supplierObj, f.airline));
-      }
+      // Filter Series Fares based on CUG mappings for everyone
+      sfMapped = sfMapped.filter((f: any) => isFlightAllowedByCUG(f.supplierObj, f.airline));
 
       // Cleanup temporary object
       sfMapped = sfMapped.map((f: any) => {
@@ -667,7 +663,7 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
       );
 
       // CUG Check
-      if (isAgent && !isDateAllowedByCUG(supplier, dateStr, sf.airline)) {
+      if (!isDateAllowedByCUG(supplier, dateStr, sf.airline)) {
         return; // Skip this series fare date
       }
 
@@ -694,7 +690,7 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
 
     // 3. Fetch from NexusDMC (only dates available)
     try {
-      const nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' });
+      const nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' }).lean();
       const { getAvailableDates } = require('../flights/nexusdmc.service');
       const nexusDatesResult = await getAvailableDates(originIata, destinationIata);
       
@@ -704,7 +700,7 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
         const dateList = nexusDatesResult._data.sector.date || [];
         dateList.forEach((dateStr: string) => {
           // dateStr from Nexus is usually YYYY-MM-DD
-          if (isAgent && !isDateAllowedByCUG(nexusSupplier, dateStr)) {
+          if (!isDateAllowedByCUG(nexusSupplier, dateStr)) {
             return; // Skip this date
           }
           if (!pricesMap[dateStr]) {
