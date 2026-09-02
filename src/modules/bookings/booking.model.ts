@@ -4,7 +4,7 @@ export interface IBooking extends Document {
   user: mongoose.Types.ObjectId;
   bookingId: string;
   type: 'FLIGHT' | 'HOTEL' | 'PACKAGE' | 'BUS';
-  status: 'INITIATED' | 'PAYMENT_PENDING' | 'TICKETING_IN_PROGRESS' | 'CONFIRMED' | 'FAILED_REFUNDING' | 'FAILED' | 'CANCELLED';
+  status: 'INITIATED' | 'PAYMENT_PENDING' | 'TICKETING_IN_PROGRESS' | 'CONFIRMED' | 'FAILED_REFUNDING' | 'FAILED' | 'CANCEL_PENDING' | 'PARTIALLY_CANCELLED' | 'CANCELLED';
   idempotencyKey?: string;
   totalAmount: number;
   date: string;
@@ -21,13 +21,15 @@ export interface IBooking extends Document {
   cancelledAt?: Date;
   refundStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'NONE';
   refundAmount?: number;
+  cancellationPenalty?: number;
+  platformFee?: number;
 
   details: {
     airline?: string;
     from?: string;
     to?: string;
     destination?: string;
-    passengers?: Array<{ name: string; gender: string; type: string; dob?: string; passportNum?: string; passportExpiry?: string; nationality?: string; }>;
+    passengers?: Array<{ name: string; gender: string; type: string; dob?: string; passportNum?: string; passportExpiry?: string; nationality?: string; status?: 'CONFIRMED' | 'CANCEL_PENDING' | 'CANCELLED' }>;
     contactDetails?: { email: string; phone: string; countryCode: string };
     seats?: string[];
     flightId?: mongoose.Types.ObjectId;
@@ -56,7 +58,7 @@ const bookingSchema = new Schema<IBooking>(
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     bookingId: { type: String, required: true, unique: true },
     type: { type: String, enum: ['FLIGHT', 'HOTEL', 'PACKAGE', 'BUS'], required: true },
-    status: { type: String, enum: ['INITIATED', 'PAYMENT_PENDING', 'TICKETING_IN_PROGRESS', 'CONFIRMED', 'FAILED_REFUNDING', 'FAILED', 'CANCELLED'], default: 'INITIATED' },
+    status: { type: String, enum: ['INITIATED', 'PAYMENT_PENDING', 'TICKETING_IN_PROGRESS', 'CONFIRMED', 'FAILED_REFUNDING', 'FAILED', 'CANCEL_PENDING', 'PARTIALLY_CANCELLED', 'CANCELLED'], default: 'INITIATED' },
     idempotencyKey: { type: String, sparse: true, unique: true },
     bookingMode: { type: String, enum: ['PERSONAL', 'MYBIZ'], default: 'PERSONAL' },
     paymentMethod: { type: String, enum: ['RAZORPAY', 'WALLET'], default: 'RAZORPAY' },
@@ -73,6 +75,8 @@ const bookingSchema = new Schema<IBooking>(
     cancelledAt: { type: Date },
     refundStatus: { type: String, enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'NONE'], default: 'NONE' },
     refundAmount: { type: Number },
+    cancellationPenalty: { type: Number },
+    platformFee: { type: Number },
 
     details: {
       airline: String,
@@ -86,7 +90,8 @@ const bookingSchema = new Schema<IBooking>(
         dob: String,
         passportNum: String,
         passportExpiry: String,
-        nationality: String
+        nationality: String,
+        status: { type: String, enum: ['CONFIRMED', 'CANCEL_PENDING', 'CANCELLED'], default: 'CONFIRMED' }
       }],
       contactDetails: { email: String, phone: String, countryCode: String },
       seats: [String],

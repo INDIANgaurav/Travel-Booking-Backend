@@ -4,6 +4,7 @@ import RecentSearch from './search.model';
 import Flight from '../inventory/flight.model';
 import { searchFlightsNexus, checkAvailability } from '../flights/nexusdmc.service';
 import jwt from 'jsonwebtoken';
+import { searchFlights as searchFlightsGapi } from '../flights/gapi.service';
 import User from '../users/user.model';
 import SeriesFare from '../seriesFare/seriesFare.model';
 import Supplier from '../supplier/supplier.model';
@@ -111,6 +112,11 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     } catch (err) {
       console.error("Error fetching supplier or markup data", err);
     }
+    
+    let gapiSupplier: any = null;
+    try {
+      gapiSupplier = await Supplier.findOne({ name: 'GAPI INFOTECH' }).lean();
+    } catch(e) {}
 
     let cugMappings: any[] = [];
     if (isAgent && agentId) {
@@ -338,6 +344,79 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       flights = [...sfMapped, ...flights];
     } catch (sfErr) {
       console.error("Error fetching series fares:", sfErr);
+    }
+
+    // Merge active GAPI Fares matching route
+    let gapiSearchResult: any[] = [];
+    try {
+      if (gapiSupplier && gapiSupplier.isActive) {
+        gapiSearchResult = await searchFlightsGapi({ query: queryParams });
+      }
+    } catch (err: any) {
+      console.error("GAPI API Error:", err);
+    }
+    
+    if (gapiSearchResult && gapiSearchResult.length > 0) {
+      // Map GAPI 2D array response to flights
+      gapiSearchResult.forEach((flightGroup: any[]) => {
+        // flightGroup is an array representing [Onward, Return]
+        const onward = flightGroup[0];
+        if (onward) {
+            const leg = onward.segments[0][0]; // First segment leg
+            const lastLeg = onward.segments[0][onward.segments[0].length - 1];
+            
+            const depTime = leg.origin.depTime;
+            const arrTime = lastLeg.destination.arrTime;
+            const durationMinutes = leg.duration || 120; // fallback if missing
+            
+            let basePrice = onward.fare.publishedFare;
+            
+            let finalCommission = 0;
+            if (gapiSupplier && gapiSupplier.commission) {
+              const percComm = (basePrice * gapiSupplier.commission.percentage) / 100;
+              finalCommission = Math.max(percComm, gapiSupplier.commission.fixedAmount);
+            }
+            const agentMarkupAmount = applyAgentMarkup(basePrice);
+            
+            const price = Math.round(basePrice + finalCommission + agentMarkupAmount);
+            
+            flights.push({
+              _id: `GAPI_${onward.resultSessionId}`, // Save sessionId for fareQuote
+              airline: leg.airline.airlineCode,
+              airlineLogo: `https://pics.avs.io/200/200/${leg.airline.airlineCode}.png`,
+              flightNumber: `${leg.airline.airlineCode}-${leg.airline.flightNumber}`,
+              departureCity: leg.origin.airport.cityCode,
+              departureAirportCode: leg.origin.airport.airportCode,
+              arrivalCity: lastLeg.destination.airport.cityCode,
+              arrivalAirportCode: lastLeg.destination.airport.airportCode,
+              departureTime: depTime,
+              arrivalTime: arrTime,
+              durationMinutes: durationMinutes,
+              price: price,
+              adultPrice: (onward.fare.publishedFare / adultCount) + (finalCommission / (adultCount + childCount + infantCount)),
+              childPrice: (onward.fare.publishedFare / adultCount) + (finalCommission / (adultCount + childCount + infantCount)),
+              infantPrice: 0,
+              stops: onward.segments[0].length - 1,
+              isGapiFare: true,
+              resultSessionId: onward.resultSessionId,
+              fareIdentifire: onward.fare.fareIdentifire,
+              availableSeats: leg.noOfSeatAvailable || 9,
+              baseFare: basePrice,
+              agentCommission: finalCommission,
+              agentMarkup: agentMarkupAmount,
+              supplierId: gapiSupplier?._id,
+              supplierObj: gapiSupplier
+            });
+        }
+      });
+      // Filter GAPI flights based on CUG mappings
+      flights = flights.filter(f => !f.isGapiFare || isFlightAllowedByCUG(f.supplierObj, f.airline));
+      
+      // Cleanup temporary object
+      flights = flights.map((f: any) => {
+        if (f.supplierObj) delete f.supplierObj;
+        return f;
+      });
     }
 
     // Merge standard Inventory Flights matching route

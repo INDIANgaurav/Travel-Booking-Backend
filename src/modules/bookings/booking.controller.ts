@@ -5,6 +5,7 @@ import Refund from './refund.model';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import { bookFlight } from '../flights/nexusdmc.service';
+import { bookFlight as bookFlightGapi, getBookingDetails as getBookingDetailsGapi } from '../flights/gapi.service';
 import SeriesFare from '../seriesFare/seriesFare.model';
 import User from '../users/user.model';
 import Transaction from '../wallet/wallet.model';
@@ -173,7 +174,7 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
       let apiBookingFailed = false;
 
       // 1. If it's a NexusDMC flight
-      if (details && !details.isSeriesFare) {
+      if (details && !details.isSeriesFare && !details.isGapiFare) {
         try {
           const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
           
@@ -265,6 +266,76 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
           console.error('Failed to decrement SeriesFare seats for Wallet payment:', sfError);
           apiBookingFailed = true;
           details.api_error = 'Failed to book series fare seats';
+          newBooking.details = details;
+        }
+      } 
+      // 3. If it's a GAPI flight
+      else if (details && details.isGapiFare) {
+        try {
+          const { resultSessionId, passengers, contactDetails } = details;
+          
+          const paxes = (passengers || []).map((p: any, index: number) => {
+            const isChildOrInfant = p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT';
+            let finalTitle = p.title || (p.gender === 'Male' ? (isChildOrInfant ? 'Mstr' : 'Mr') : (isChildOrInfant ? 'Miss' : 'Ms'));
+            
+            let paxType = 1; // Adult
+            if (p.type?.toUpperCase() === 'CHILD') paxType = 2;
+            if (p.type?.toUpperCase() === 'INFANT') paxType = 3;
+            
+            return {
+              paxType,
+              title: finalTitle,
+              firstName: p.name.split(' ')[0] || 'Unknown',
+              lastName: p.name.split(' ').slice(1).join(' ') || 'User',
+              addressLine1: "DELHI", // Defaulting to generic as per API sample
+              city: "DELHI",
+              countryCode: p.nationality || "IN",
+              nationality: p.nationality || "IN",
+              postalCode: "110092",
+              dateOfBirth: p.dob ? new Date(p.dob).toISOString().split('T')[0] : (paxType===1 ? "1990-01-01" : paxType===2 ? "2018-01-01" : "2025-01-01"),
+              passportNo: p.passportNum || "",
+              passportExpiry: p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0] : "2030-01-01",
+              passportIssueDate: "2020-01-01",
+              gender: p.gender === 'Female' ? 2 : 1, // 1 for Male, 2 for Female
+              paxId: index,
+              isLeadPax: index === 0
+            };
+          });
+
+          const bookPayload = {
+            passengers: paxes,
+            resultSessionId: resultSessionId,
+            contactNo: contactDetails?.phone || "9999999999",
+            email: contactDetails?.email || "dummy@test.com",
+            gSTDetailsRequired: false
+          };
+
+          const bookResult = await bookFlightGapi(bookPayload);
+          
+          if (bookResult && bookResult.bookingstatus === "Confirmed" && bookResult.status === 1) {
+            details.txid = bookResult.txid;
+            details.gapi_response = bookResult;
+            
+            // Try to fetch PNR immediately
+            try {
+               const detailsResult = await getBookingDetailsGapi(bookResult.txid);
+               details.pnr = detailsResult?.FlightBookingSecotorDetails?.[0]?.passengerInfo?.[0]?.airlinepnr || bookResult.txid;
+            } catch(e) {
+               console.error("GAPI Get Booking Details error during booking:", e);
+               details.pnr = bookResult.txid; // Fallback to txid if PNR fetch fails
+            }
+
+            newBooking.details = details;
+            newBooking.status = 'CONFIRMED';
+          } else {
+            apiBookingFailed = true;
+            details.api_error = bookResult?.errorMsg || 'GAPI returned false success';
+            newBooking.details = details;
+          }
+        } catch (gapiError: any) {
+          console.error('GAPI Booking failed for Wallet payment:', gapiError);
+          apiBookingFailed = true;
+          details.api_error = gapiError.message || 'Exception during GAPI booking';
           newBooking.details = details;
         }
       }

@@ -11,7 +11,8 @@ import {
   getAgentOutstanding,
   getAgentActivation,
   getSupplierMapping,
-  getFareQuotes
+  getFareQuotes,
+  getAgentAnalytics
 } from './reports.controller';
 
 const router = Router();
@@ -31,5 +32,6 @@ router.get('/agent-outstanding', getAgentOutstanding);
 router.get('/agent-activation', getAgentActivation);
 router.get('/supplier-mapping', getSupplierMapping);
 router.get('/fare-quotes', getFareQuotes);
+router.get('/agent-analytics', getAgentAnalytics);
 
 export default router;

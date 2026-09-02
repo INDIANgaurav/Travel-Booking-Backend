@@ -521,3 +521,80 @@ export const getFareQuotes = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+
+// 12. Agent Analytics
+export const getAgentAnalytics = async (req: Request, res: Response) => {
+  try {
+    // 1. Get Top 5 Agents by Revenue
+    const topAgents = await Booking.aggregate([
+      { $match: { status: 'CONFIRMED' } },
+      { $group: {
+          _id: '$user',
+          totalSales: { $sum: '$totalAmount' },
+          totalCommission: { $sum: '$details.commission' },
+          totalBookings: { $sum: 1 }
+      }},
+      { $sort: { totalSales: -1 as const } },
+      { $limit: 5 },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'agentInfo' } },
+      { $unwind: { path: '$agentInfo', preserveNullAndEmptyArrays: true } },
+      { $project: {
+          name: { $ifNull: ['$agentInfo.companyName', '$agentInfo.name'] },
+          totalSales: 1,
+          totalCommission: 1,
+          totalBookings: 1
+      }}
+    ]);
+
+    // 2. Get Daily Booking Trends (Last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    const bookingTrends = await Booking.aggregate([
+      { $match: { 
+          status: 'CONFIRMED',
+          createdAt: { $gte: thirtyDaysAgo }
+      }},
+      { $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          amount: { $sum: '$totalAmount' },
+          count: { $sum: 1 }
+      }},
+      { $sort: { _id: 1 as const } },
+      { $project: {
+          date: '$_id',
+          amount: 1,
+          count: 1,
+          _id: 0
+      }}
+    ]);
+
+    // 3. Get Summary Cards
+    const summary = await Booking.aggregate([
+      { $match: { status: 'CONFIRMED' } },
+      { $group: {
+          _id: null,
+          totalRevenue: { $sum: '$totalAmount' },
+          totalCommission: { $sum: '$details.commission' },
+          totalBookings: { $sum: 1 }
+      }}
+    ]);
+
+    const activeAgentsCount = await User.countDocuments({ role: 'AGENT', isActive: true });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        topAgents,
+        bookingTrends,
+        summary: summary.length > 0 ? summary[0] : { totalRevenue: 0, totalCommission: 0, totalBookings: 0 },
+        activeAgentsCount
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+};

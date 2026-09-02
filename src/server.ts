@@ -36,6 +36,8 @@ import reportRoutes from './modules/reports/reports.routes';
 import financeRoutes from './modules/wallet/finance.routes';
 import commissionRoutes from './modules/commissions/commission.routes';
 import promoRoutes from './modules/promos/promo.routes';
+import cancellationRoutes from './modules/bookings/cancellation.routes';
+import ticketRoutes from './modules/tickets/ticket.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
@@ -94,6 +96,8 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/commissions', commissionRoutes);
 app.use('/api/promos', promoRoutes);
+app.use('/api/cancellations', cancellationRoutes);
+app.use('/api/tickets', ticketRoutes);
 
 // Global Error Handler to catch [object Object] issues
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
