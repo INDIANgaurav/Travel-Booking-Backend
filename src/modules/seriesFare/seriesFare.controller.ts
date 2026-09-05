@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import SeriesFare from './seriesFare.model';
+import SeatHold from './seatHold.model';
 import { AuthRequest } from '../../middleware/auth.middleware';
 
 export const createSeriesFare = async (req: AuthRequest, res: Response) => {
@@ -813,6 +814,89 @@ export const getSeriesFareSeats = async (req: Request, res: Response) => {
         travelDate: sf.travelDate,
       }
     });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Atomically hold seats for a user
+// @route   POST /api/series-fares/:id/hold
+// @access  Private
+export const holdSeats = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { paxCount } = req.body;
+    const userId = req.user?._id;
+
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!paxCount || paxCount < 1) return res.status(400).json({ message: 'Invalid passenger count' });
+
+    // Check if user already holds these seats for this exact flight and is ACTIVE
+    const existingHold = await SeatHold.findOne({ userId, flightId: id, status: 'ACTIVE' });
+    if (existingHold) {
+      if (new Date() < existingHold.expiresAt) {
+        // Still valid, return it
+        return res.json({ message: 'Hold active', hold: existingHold });
+      } else {
+        // Expired, mark it as EXPIRED and release seats
+        existingHold.status = 'EXPIRED';
+        await existingHold.save();
+        await SeriesFare.updateOne({ _id: id }, { $inc: { availableSeats: existingHold.paxCount } });
+      }
+    }
+
+    // Attempt to atomically decrement availableSeats
+    const sf = await SeriesFare.findOneAndUpdate(
+      { _id: id, availableSeats: { $gte: paxCount } },
+      { $inc: { availableSeats: -paxCount } },
+      { new: true }
+    );
+
+    if (!sf) {
+      return res.status(400).json({ message: 'Not enough seats available' });
+    }
+
+    // 10 minutes from now
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    const hold = new SeatHold({
+      userId,
+      flightId: sf._id,
+      paxCount,
+      lockedFare: sf.adtFare, // Can expand to chd/inf if needed
+      status: 'ACTIVE',
+      expiresAt
+    });
+
+    await hold.save();
+
+    res.json({ message: 'Seats held successfully', hold });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Release held seats manually
+// @route   POST /api/series-fares/:id/release-hold
+// @access  Private
+export const releaseHoldSeats = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const hold = await SeatHold.findOne({ userId, flightId: id, status: 'ACTIVE' });
+    
+    if (hold) {
+      hold.status = 'RELEASED';
+      await hold.save();
+      // Atomically give the seats back
+      await SeriesFare.updateOne({ _id: id }, { $inc: { availableSeats: hold.paxCount } });
+      return res.json({ message: 'Seats released successfully' });
+    }
+
+    res.json({ message: 'No active hold found' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

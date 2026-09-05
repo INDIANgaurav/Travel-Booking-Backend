@@ -25,6 +25,10 @@ export interface ISeriesFare extends Document {
   status: 'Active' | 'Inactive' | 'SoldOut';
   isArchived: boolean;
   connectionId?: string;
+  checkinBaggage?: string;
+  cabinBaggage?: string;
+  mealsIncluded?: boolean;
+  isRefundable?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -55,6 +59,10 @@ const seriesFareSchema = new Schema<ISeriesFare>(
     realtimeBook: { type: Boolean, default: true },
     status: { type: String, enum: ['Active', 'Inactive', 'SoldOut'], default: 'Active' },
     isArchived: { type: Boolean, default: false },
+    checkinBaggage: { type: String, default: '15 KG' },
+    cabinBaggage: { type: String, default: '7 KG' },
+    mealsIncluded: { type: Boolean, default: false },
+    isRefundable: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

@@ -40,6 +40,7 @@ export interface IBooking extends Document {
     nexus_query?: any;
     currency?: string;
     total_price?: number;
+    commission?: number;
     
     // Hotel specific details
     hotelId?: string;
@@ -103,6 +104,7 @@ const bookingSchema = new Schema<IBooking>(
       nexus_query: Schema.Types.Mixed,
       currency: String,
       total_price: Number,
+      commission: { type: Number, default: 0 },
       
       // Hotel Specific
       hotelId: String,

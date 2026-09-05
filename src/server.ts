@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import connectDB from './config/db';
 import './config/firebase-admin';
 import { mongoSanitize } from './middleware/sanitize.middleware';
+import { startCronJobs } from './cron';
 
 import authRoutes from './modules/auth/auth.routes';
 import adminRoutes from './modules/users/admin.routes';
@@ -42,6 +43,7 @@ import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
   seedSuppliers();
+  startCronJobs();
 });
 
 const app = express();

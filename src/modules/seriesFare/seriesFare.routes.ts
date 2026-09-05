@@ -21,7 +21,9 @@ import {
   bulkDeleteFares,
   runAutoSync,
   populateSectors,
-  getSeriesFareSeats
+  getSeriesFareSeats,
+  holdSeats,
+  releaseHoldSeats
 } from './seriesFare.controller';
 import { protect } from '../../middleware/auth.middleware';
 import { authorizeRoles } from '../../middleware/rbac.middleware';
@@ -59,5 +61,9 @@ router.route('/:id')
 
 // Public: real-time seat availability (used on booking page checkout)
 router.get('/:id/seats', getSeriesFareSeats);
+
+// Seat Holding logic
+router.post('/:id/hold', protect, holdSeats);
+router.post('/:id/release-hold', protect, releaseHoldSeats);
 
 export default router;

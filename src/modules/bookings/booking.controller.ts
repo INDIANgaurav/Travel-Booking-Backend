@@ -249,17 +249,27 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
           const sfIdClean = sfId.replace('SF_', '');
           const mongooseSF = require('mongoose');
           if (mongooseSF.Types.ObjectId.isValid(sfIdClean)) {
-            const seriesFare = await SeriesFare.findById(sfIdClean);
-            if (seriesFare) {
-               seriesFare.availableSeats = Math.max(0, seriesFare.availableSeats - seatCount);
-               if (seriesFare.availableSeats === 0) {
-                   seriesFare.status = 'SoldOut';
-               }
-               await seriesFare.save();
-               
-               details.pnr = seriesFare.airlinePnr || 'PENDING';
+            const SeatHold = require('../seriesFare/seatHold.model').default;
+            const hold = await SeatHold.findOne({ userId: req.user._id, flightId: sfIdClean, status: 'ACTIVE' });
+            
+            if (!hold || new Date() > hold.expiresAt) {
+               apiBookingFailed = true;
+               details.api_error = 'Seat hold expired or not found. Please hold the seats before booking.';
                newBooking.details = details;
-               newBooking.status = 'CONFIRMED';
+            } else {
+               hold.status = 'BOOKED';
+               await hold.save();
+               
+               const seriesFare = await SeriesFare.findById(sfIdClean);
+               if (seriesFare) {
+                  if (seriesFare.availableSeats === 0) {
+                      seriesFare.status = 'SoldOut';
+                      await seriesFare.save();
+                  }
+                  details.pnr = seriesFare.airlinePnr || 'PENDING';
+                  newBooking.details = details;
+                  newBooking.status = 'CONFIRMED';
+               }
             }
           }
         } catch (sfError) {
@@ -658,19 +668,29 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
           // Check if valid ObjectId to prevent CastError
           const mongoose = require('mongoose');
           if (mongoose.Types.ObjectId.isValid(sfIdClean)) {
-            const seriesFare = await SeriesFare.findById(sfIdClean);
-            if (seriesFare) {
-               seriesFare.availableSeats = Math.max(0, seriesFare.availableSeats - seatCount);
-               if (seriesFare.availableSeats === 0) {
-                   seriesFare.status = 'SoldOut';
-               }
-               await seriesFare.save();
-               
-               // Assign the group PNR to the customer's booking
-               details.pnr = seriesFare.airlinePnr || 'PENDING';
-               booking.details = details;
-               booking.markModified('details');
-            }
+             const SeatHold = require('../seriesFare/seatHold.model').default;
+             const hold = await SeatHold.findOne({ userId: req.user._id, flightId: sfIdClean, status: 'ACTIVE' });
+             
+             if (!hold || new Date() > hold.expiresAt) {
+                apiBookingFailed = true;
+                details.api_error = 'Seat hold expired before payment could be verified.';
+                booking.details = details;
+                booking.markModified('details');
+             } else {
+                hold.status = 'BOOKED';
+                await hold.save();
+                
+                const seriesFare = await SeriesFare.findById(sfIdClean);
+                if (seriesFare) {
+                   if (seriesFare.availableSeats === 0) {
+                       seriesFare.status = 'SoldOut';
+                       await seriesFare.save();
+                   }
+                   details.pnr = seriesFare.airlinePnr || 'PENDING';
+                   booking.details = details;
+                   booking.markModified('details');
+                }
+             }
           }
         } catch (sfError) {
           console.error('Failed to decrement SeriesFare seats:', sfError);

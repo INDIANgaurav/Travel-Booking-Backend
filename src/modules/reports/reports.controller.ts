@@ -525,9 +525,22 @@ export const getFareQuotes = async (req: Request, res: Response) => {
 // 12. Agent Analytics
 export const getAgentAnalytics = async (req: Request, res: Response) => {
   try {
+    const { startDate, endDate } = req.query;
+
+    const matchStage: any = { status: 'CONFIRMED' };
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+      if (startDate) matchStage.createdAt.$gte = new Date(startDate as string);
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        matchStage.createdAt.$lte = end;
+      }
+    }
+
     // 1. Get Top 5 Agents by Revenue
     const topAgents = await Booking.aggregate([
-      { $match: { status: 'CONFIRMED' } },
+      { $match: matchStage },
       { $group: {
           _id: '$user',
           totalSales: { $sum: '$totalAmount' },
@@ -546,16 +559,17 @@ export const getAgentAnalytics = async (req: Request, res: Response) => {
       }}
     ]);
 
-    // 2. Get Daily Booking Trends (Last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    thirtyDaysAgo.setHours(0, 0, 0, 0);
+    // 2. Get Daily Booking Trends
+    let trendsMatchStage = { ...matchStage };
+    if (!startDate && !endDate) {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
+      trendsMatchStage.createdAt = { $gte: thirtyDaysAgo };
+    }
 
     const bookingTrends = await Booking.aggregate([
-      { $match: { 
-          status: 'CONFIRMED',
-          createdAt: { $gte: thirtyDaysAgo }
-      }},
+      { $match: trendsMatchStage },
       { $group: {
           _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
           amount: { $sum: '$totalAmount' },
@@ -572,7 +586,7 @@ export const getAgentAnalytics = async (req: Request, res: Response) => {
 
     // 3. Get Summary Cards
     const summary = await Booking.aggregate([
-      { $match: { status: 'CONFIRMED' } },
+      { $match: matchStage },
       { $group: {
           _id: null,
           totalRevenue: { $sum: '$totalAmount' },
@@ -583,10 +597,31 @@ export const getAgentAnalytics = async (req: Request, res: Response) => {
 
     const activeAgentsCount = await User.countDocuments({ role: 'AGENT', isActive: true });
 
+    const allAgentsPerformance = await Booking.aggregate([
+      { $match: matchStage },
+      { $group: {
+          _id: '$user',
+          totalSales: { $sum: '$totalAmount' },
+          totalCommission: { $sum: '$details.commission' },
+          totalBookings: { $sum: 1 }
+      }},
+      { $sort: { totalSales: -1 as const } },
+      { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'agentInfo' } },
+      { $unwind: { path: '$agentInfo', preserveNullAndEmptyArrays: true } },
+      { $project: {
+          name: { $ifNull: ['$agentInfo.companyName', '$agentInfo.name'] },
+          email: '$agentInfo.email',
+          totalSales: 1,
+          totalCommission: 1,
+          totalBookings: 1
+      }}
+    ]);
+
     return res.status(200).json({
       success: true,
       data: {
         topAgents,
+        allAgentsPerformance,
         bookingTrends,
         summary: summary.length > 0 ? summary[0] : { totalRevenue: 0, totalCommission: 0, totalBookings: 0 },
         activeAgentsCount
