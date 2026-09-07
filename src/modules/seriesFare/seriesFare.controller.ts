@@ -739,38 +739,13 @@ export const runAutoSync = async (req: AuthRequest, res: Response) => {
     if (req.user && !req.user.roles?.includes('SUPER_ADMIN')) {
       query.supplierId = req.user.roles?.includes('SUPPLIER_STAFF') ? req.user.supplierOwnerId : req.user._id;
     }
-    const result = await SeriesFare.updateMany(query, { $set: { status: 'SoldOut' } });
-    res.json({ message: 'Auto Sync Complete. Deactivated ' + result.modifiedCount + ' expired flights.' });
+    const result = await SeriesFare.updateMany(query, { $set: { status: 'Expired' } });
+    res.json({ message: 'Cleanup Complete. Marked ' + result.modifiedCount + ' flights as Expired.' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
 };
 
-export const populateSectors = async (req: AuthRequest, res: Response) => {
-  try {
-    const dummySectors = [
-      { origin: 'DEL', destination: 'BOM' },
-      { origin: 'BOM', destination: 'BLR' },
-      { origin: 'DEL', destination: 'GOI' }
-    ];
-    let query: any = { $or: [{ origin: '' }, { destination: '' }] };
-    if (req.user && !req.user.roles?.includes('SUPER_ADMIN')) {
-      query.supplierId = req.user.roles?.includes('SUPPLIER_STAFF') ? req.user.supplierOwnerId : req.user._id;
-    }
-    const faresToUpdate = await SeriesFare.find(query);
-    let count = 0;
-    for (let fare of faresToUpdate) {
-      const randomSector = dummySectors[Math.floor(Math.random() * dummySectors.length)];
-      fare.origin = fare.origin || randomSector.origin;
-      fare.destination = fare.destination || randomSector.destination;
-      await fare.save();
-      count++;
-    }
-    res.json({ message: 'Sector population complete. Updated ' + count + ' records.' });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  }
-};
 
 // @desc    Get real-time seat map for a Series Fare flight
 // @route   GET /api/series-fares/:id/seats  (public - no auth needed for checkout)

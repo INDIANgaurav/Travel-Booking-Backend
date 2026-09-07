@@ -282,16 +282,25 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         
         let uploaderCommission = (sf.agentCommission || 0) * (adultCount + childCount);
         let adminCommission = 0;
+        let agentMarkupAmount = applyAgentMarkup(basePrice);
+        
         // Match supplier by name (case-insensitive) since supplierId field stores User._id not Supplier._id
         const supplier = allSuppliers.find((s: any) => 
           s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
         );
-        if (supplier && supplier.commission) {
+        
+        // Self-Consumption Bypass: If the logged-in agent/supplier is the uploader of this flight
+        const isSelfConsumption = isAgent && agentId && sf.supplierId && agentId.toString() === sf.supplierId.toString();
+        
+        if (isSelfConsumption) {
+          uploaderCommission = 0;
+          adminCommission = 0;
+          agentMarkupAmount = 0;
+        } else if (supplier && supplier.commission) {
           const percComm = (basePrice * supplier.commission.percentage) / 100;
           adminCommission = Math.max(percComm, supplier.commission.fixedAmount);
         }
 
-        const agentMarkupAmount = applyAgentMarkup(basePrice);
         // Base Price + Uploader Profit (if any) + Admin Commission + Searching Agent's markup
         const price = basePrice + uploaderCommission + adminCommission + agentMarkupAmount; 
         

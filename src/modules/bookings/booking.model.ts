@@ -41,6 +41,7 @@ export interface IBooking extends Document {
     currency?: string;
     total_price?: number;
     commission?: number;
+    isSelfConsumption?: boolean;
     
     // Hotel specific details
     hotelId?: string;

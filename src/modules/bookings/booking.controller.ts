@@ -91,11 +91,14 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
             agentSupplierDoc.walletBalance += flightCostToSupplier;
             await agentSupplierDoc.save({ session });
             
+            const isSelfConsumption = req.user._id.toString() === supplierId.toString();
+            if (isSelfConsumption) details.isSelfConsumption = true;
+            
             await WalletTransaction.create([{
               user: agentSupplierDoc._id,
               type: 'CREDIT',
               amount: flightCostToSupplier,
-              description: `Series Fare Sale Credit (Booking by User: ${req.user._id})`,
+              description: isSelfConsumption ? `Self-Consumption Seat Block (User: ${req.user._id})` : `Series Fare Sale Credit (Booking by User: ${req.user._id})`,
               grossAmount: flightCostToSupplier,
               netAmountDebited: 0
             }], { session });

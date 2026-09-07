@@ -20,7 +20,6 @@ import {
   bulkConnectFares,
   bulkDeleteFares,
   runAutoSync,
-  populateSectors,
   getSeriesFareSeats,
   holdSeats,
   releaseHoldSeats
@@ -43,7 +42,6 @@ router.put('/bulk-modify', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGEN
 router.put('/bulk-connect', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), bulkConnectFares);
 router.delete('/bulk-delete', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), bulkDeleteFares);
 router.post('/auto-sync', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), runAutoSync);
-router.post('/populate-sectors', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), populateSectors);
 
 router.get('/summary', protect, getSupplierSummary);
 router.get('/booking-history', protect, getSupplierBookingHistory);

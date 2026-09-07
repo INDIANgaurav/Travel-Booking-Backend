@@ -39,6 +39,7 @@ import commissionRoutes from './modules/commissions/commission.routes';
 import promoRoutes from './modules/promos/promo.routes';
 import cancellationRoutes from './modules/bookings/cancellation.routes';
 import ticketRoutes from './modules/tickets/ticket.routes';
+import groupBookingRoutes from './modules/bookings/groupBooking.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
@@ -61,7 +62,7 @@ app.use(cors({
 }));
 
 app.get('/', (req, res) => {
-  res.send('Travel Booking App API is running (TypeScript)...');
+  res.send('Travel Booking App API is running (TypeScript)... ');
 });
 
 const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200, message: 'Too many requests from this IP, please try again after 15 minutes' });
@@ -80,6 +81,7 @@ app.use('/api/hotels', hotelRoutes);
 app.use('/api/series-fare', seriesFareRoutes);
 app.get('/api/test-supplier', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/suppliers', supplierRoutes);
+app.use('/api/group-bookings', groupBookingRoutes);
 
 app.use('/api/markup', markupRoutes);
 app.use('/api/offline-booking', b2bOfflineBookingRoutes);

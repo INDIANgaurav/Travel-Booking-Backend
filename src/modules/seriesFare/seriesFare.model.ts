@@ -22,7 +22,7 @@ export interface ISeriesFare extends Document {
   totalSeats: number;
   availableSeats: number;
   realtimeBook: boolean;
-  status: 'Active' | 'Inactive' | 'SoldOut';
+  status: 'Active' | 'Inactive' | 'SoldOut' | 'Expired';
   isArchived: boolean;
   connectionId?: string;
   checkinBaggage?: string;
@@ -57,7 +57,7 @@ const seriesFareSchema = new Schema<ISeriesFare>(
     totalSeats: { type: Number, required: true, default: 10 },
     availableSeats: { type: Number, required: true, default: 10 },
     realtimeBook: { type: Boolean, default: true },
-    status: { type: String, enum: ['Active', 'Inactive', 'SoldOut'], default: 'Active' },
+    status: { type: String, enum: ['Active', 'Inactive', 'SoldOut', 'Expired'], default: 'Active' },
     isArchived: { type: Boolean, default: false },
     checkinBaggage: { type: String, default: '15 KG' },
     cabinBaggage: { type: String, default: '7 KG' },
