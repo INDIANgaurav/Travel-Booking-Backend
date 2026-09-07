@@ -53,15 +53,15 @@ router.get('/report/slow-moving', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLI
 router.get('/archive', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), getArchivedFares);
 router.put('/:id/archive', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), toggleArchiveStatus);
 
-router.route('/:id')
-  .put(protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), updateSeriesFare)
-  .delete(protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), deleteSeriesFare);
-
 // Public: real-time seat availability (used on booking page checkout)
 router.get('/:id/seats', getSeriesFareSeats);
 
 // Seat Holding logic
 router.post('/:id/hold', protect, holdSeats);
 router.post('/:id/release-hold', protect, releaseHoldSeats);
+
+router.route('/:id')
+  .put(protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), updateSeriesFare)
+  .delete(protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), deleteSeriesFare);
 
 export default router;

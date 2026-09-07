@@ -13,9 +13,11 @@ export const getFlightSales = async (req: Request, res: Response) => {
     let matchStage: any = { type: 'FLIGHT' };
     
     if (fromDate && toDate) {
+      const to = new Date(toDate as string);
+      to.setHours(23, 59, 59, 999);
       matchStage.createdAt = { 
         $gte: new Date(fromDate as string), 
-        $lte: new Date(toDate as string) 
+        $lte: to
       };
     }
     
@@ -145,9 +147,11 @@ export const getHotelCancellations = async (req: Request, res: Response) => {
     let matchStage: any = { type: 'HOTEL', status: 'CANCELLED' };
     
     if (fromDate && toDate) {
+      const to = new Date(toDate as string);
+      to.setHours(23, 59, 59, 999);
       matchStage.cancelledAt = { 
         $gte: new Date(fromDate as string), 
-        $lte: new Date(toDate as string) 
+        $lte: to
       };
     }
 
@@ -229,9 +233,11 @@ export const getDebitNotes = async (req: Request, res: Response) => {
     let matchStage: any = { type: 'DEBIT' };
     
     if (fromDate && toDate) {
+      const to = new Date(toDate as string);
+      to.setHours(23, 59, 59, 999);
       matchStage.date = { 
         $gte: new Date(fromDate as string), 
-        $lte: new Date(toDate as string) 
+        $lte: to
       };
     }
 
@@ -274,9 +280,11 @@ export const getCreditNotes = async (req: Request, res: Response) => {
     let matchStage: any = { type: 'CREDIT' };
     
     if (fromDate && toDate) {
+      const to = new Date(toDate as string);
+      to.setHours(23, 59, 59, 999);
       matchStage.date = { 
         $gte: new Date(fromDate as string), 
-        $lte: new Date(toDate as string) 
+        $lte: to
       };
     }
 
@@ -314,39 +322,49 @@ export const getPgReports = async (req: Request, res: Response) => {
   try {
     const { fromDate, toDate, limit = 10, page = 1 } = req.query;
     
-    // Using wallet transactions with razorpay specific fields
-    let matchStage: any = { paymentMethod: 'RAZORPAY', razorpayPaymentId: { $exists: true } };
+    let matchStage: any = { razorpayPaymentId: { $exists: true, $ne: '' } };
     
     if (fromDate && toDate) {
-      matchStage.date = { 
+      const to = new Date(toDate as string);
+      to.setHours(23, 59, 59, 999);
+      matchStage.createdAt = { 
         $gte: new Date(fromDate as string), 
-        $lte: new Date(toDate as string) 
+        $lte: to 
       };
     }
 
-    const data = await WalletTransaction.aggregate([
+    const data = await Booking.aggregate([
       { $match: matchStage },
       { $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'agent' } },
       { $unwind: { path: '$agent', preserveNullAndEmptyArrays: true } },
-      { $sort: { date: -1 as const } },
+      { $sort: { createdAt: -1 as const } },
       { $skip: (Number(page) - 1) * Number(limit) },
       { $limit: Number(limit) },
       { $project: {
           id: '$_id',
-          date: { $dateToString: { format: "%Y-%m-%d %H:%M", date: "$date" } },
-          amount: '$amount',
-          pgCharge: { $literal: 0 }, // Adjust if you have PG charges stored
-          totalAmount: '$amount', // Adjust if you have total after charges
-          trackingId: '$razorpayOrderId',
-          bankRefNo: '$razorpayPaymentId',
+          srNo: { $literal: '-' },
+          date: { $dateToString: { format: "%Y-%m-%d %H:%M", date: "$createdAt" } },
+          amount: '$totalAmount',
+          pgCharge: { $literal: 0 },
+          totalAmount: '$totalAmount',
+          trackingId: { $ifNull: ['$razorpayOrderId', 'N/A'] },
+          bankRefNo: { $ifNull: ['$razorpayPaymentId', 'N/A'] },
           orderStatus: { $literal: 'Success' },
           failureMessage: { $literal: '' },
           pgType: { $literal: 'RAZORPAY' },
-          company: { $ifNull: ['$agent.companyName', '$agent.name'] }
+          company: { $ifNull: ['$agent.companyName', '$agent.name'] },
+          txid: '$bookingId',
+          pnr: { $ifNull: ['$details.pnr', 'N/A'] },
+          agentId: '$agent._id',
+          pgName: { $literal: 'Razorpay' },
+          agencyDetails: { $ifNull: ['$agent.companyName', '$agent.name'] },
+          paymentMode: { $literal: 'Online' },
+          cardName: { $literal: 'N/A' },
+          currency: { $literal: 'INR' },
       }}
     ]);
     
-    const total = await WalletTransaction.countDocuments(matchStage);
+    const total = await Booking.countDocuments(matchStage);
 
     return res.status(200).json({ success: true, data, total });
   } catch (error) {
@@ -359,7 +377,7 @@ export const getAgentOutstanding = async (req: Request, res: Response) => {
   try {
     const { searchQuery, limit = 10, page = 1 } = req.query;
     
-    let matchStage: any = { roles: { $in: ['B2B_AGENT'] } };
+    let matchStage: any = { roles: { $in: ['B2B_AGENT', 'SUPPLIER_AGENT'] } };
     
     if (searchQuery) {
       matchStage['companyName'] = { $regex: searchQuery, $options: 'i' };
@@ -399,7 +417,7 @@ export const getAgentActivation = async (req: Request, res: Response) => {
   try {
     const { limit = 10, page = 1 } = req.query;
     
-    const matchStage: any = { roles: { $in: ['B2B_AGENT'] } };
+    const matchStage: any = { roles: { $in: ['B2B_AGENT', 'SUPPLIER_AGENT'] } };
     
     const data = await User.aggregate([
       { $match: matchStage },
@@ -411,7 +429,7 @@ export const getAgentActivation = async (req: Request, res: Response) => {
           name: '$name',
           mobile: '$phone',
           email: '$email',
-          role: { $literal: 'B2B_AGENT' },
+          role: { $cond: [{ $in: ['SUPPLIER_AGENT', '$roles'] }, 'SUPPLIER_AGENT', 'B2B_AGENT'] },
           status: '$agentStatus',
           cash: '$walletBalance',
           credit: '$creditBalance',
@@ -440,7 +458,7 @@ export const getAgentActivation = async (req: Request, res: Response) => {
 export const getSupplierMapping = async (req: Request, res: Response) => {
   try {
     const { searchQuery, limit = 10, page = 1 } = req.query;
-    let matchStage: any = { roles: { $in: ['B2B_AGENT'] } };
+    let matchStage: any = { roles: { $in: ['B2B_AGENT', 'SUPPLIER_AGENT'] } };
 
     if (searchQuery) {
       matchStage['companyName'] = { $regex: searchQuery, $options: 'i' };
@@ -489,9 +507,11 @@ export const getFareQuotes = async (req: Request, res: Response) => {
     let matchStage: any = {};
     
     if (fromDate && toDate) {
+      const to = new Date(toDate as string);
+      to.setHours(23, 59, 59, 999);
       matchStage.createdAt = { 
         $gte: new Date(fromDate as string), 
-        $lte: new Date(toDate as string) 
+        $lte: to
       };
     }
 

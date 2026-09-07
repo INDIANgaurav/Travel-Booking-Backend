@@ -255,16 +255,35 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       const endOfDay = new Date(targetDate);
       endOfDay.setUTCHours(23, 59, 59, 999);
 
+      const paxCount = adultCount + childCount;
       const sfFilter: any = {
         origin: { $regex: new RegExp(`^${originIata}$`, 'i') },
         destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
         status: { $regex: new RegExp('^Active$', 'i') },
-        travelDate: { $gte: startOfDay, $lte: endOfDay }
+        travelDate: { $gte: startOfDay, $lte: endOfDay },
+        availableSeats: { $gte: paxCount }
       };
 
       const seriesFares = await SeriesFare.find(sfFilter).lean();
       // Fetch all active suppliers to match by name (supplierId in SF stores User._id, not Supplier._id)
       const allSuppliers = await Supplier.find({ isActive: true }).lean();
+      
+      const getAirlineCode = (name: string) => {
+        const n = name.toLowerCase();
+        if (n.includes('akasa')) return 'QP';
+        if (n.includes('indigo')) return '6E';
+        if (n.includes('spicejet')) return 'SG';
+        if (n.includes('air india express')) return 'IX';
+        if (n.includes('air india')) return 'AI';
+        if (n.includes('vistara')) return 'UK';
+        if (n.includes('lufthansa')) return 'LH';
+        if (n.includes('emirates')) return 'EK';
+        if (n.includes('qatar')) return 'QR';
+        if (n.includes('etihad')) return 'EY';
+        if (n.includes('singapore')) return 'SQ';
+        if (n.includes('british')) return 'BA';
+        return 'AI'; // fallback
+      };
       
       let sfMapped = seriesFares.map((sf: any) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
@@ -310,11 +329,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         return {
           _id: `SF_${sf._id}`,
           airline: sf.airline,
-          airlineLogo: sf.airline.toLowerCase().includes('akasa')
-            ? 'https://pics.avs.io/200/200/QP.png'
-            : sf.airline.toLowerCase().includes('indigo')
-            ? 'https://pics.avs.io/200/200/6E.png'
-            : `https://pics.avs.io/200/200/AI.png`,
+          airlineLogo: `https://pics.avs.io/200/200/${getAirlineCode(sf.airline)}.png`,
           flightNumber: sf.flightNo || 'SF-1107',
           departureCity: sf.origin,
           departureAirportCode: sf.origin,
