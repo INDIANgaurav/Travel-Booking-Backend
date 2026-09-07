@@ -9,13 +9,16 @@ import {
   getSupplierStaff,
   addSupplierStaff,
   updateSupplierStaff,
-  deleteSupplierStaff
+  deleteSupplierStaff,
+  syncDomainCache
 } from './user.controller';
 import { protect } from '../../middleware/auth.middleware';
 
 const router = express.Router();
 
 router.use(protect); // All user routes require login
+
+router.post('/sync-domain-cache', syncDomainCache);
 
 router.route('/profile')
   .get(getUserProfile)

@@ -56,6 +56,44 @@ export interface IUser extends Document {
   displayOnProfileIcon?: 'Company Name' | 'User Name' | 'Show Both';
   referredBy?: string;
   reportingTo?: string;
+  // --- New Company Fields ---
+  services?: string;
+  businessType?: string;
+  iataCode?: string;
+  contactRepresentative?: string;
+  nameOnPan?: string;
+  commGrp?: string;
+  marqueesDetail?: string;
+  negoMarqueesDetail?: string;
+  salesContactNo?: string;
+  website?: string;
+  officePhone?: string;
+  country?: string;
+  isVerified?: boolean;
+  isOwner?: boolean;
+  isLoginUser?: boolean;
+  youtubeUrl?: string;
+  linkedinUrl?: string;
+  facebookUrl?: string;
+  instagramUrl?: string;
+  twitterUrl?: string;
+  gstEnabled?: boolean;
+  gstCompanyName?: string;
+  gstCompanyAddress?: string;
+  gstEmail?: string;
+  gstContactNo?: string;
+  cugPlatformSellingCharge?: number;
+  cugPlatformBuyingCharge?: number;
+  
+  // --- New Document Fields ---
+  documents?: {
+    docName: string;
+    docType: string;
+    url: string;
+    uploadedAt: Date;
+  }[];
+  isApprovedDocument?: boolean;
+
   matchPassword(enteredPassword: string): Promise<boolean>;
   resetPasswordToken?: string;
   resetPasswordExpire?: Date;

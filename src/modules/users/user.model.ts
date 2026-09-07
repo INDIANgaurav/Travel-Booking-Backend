@@ -133,6 +133,46 @@ const userSchema = new Schema<IUser>(
     reportingTo: {
       type: String,
     },
+    // --- New Company Fields ---
+    services: { type: String },
+    businessType: { type: String },
+    iataCode: { type: String },
+    contactRepresentative: { type: String },
+    nameOnPan: { type: String },
+    commGrp: { type: String },
+    marqueesDetail: { type: String },
+    negoMarqueesDetail: { type: String },
+    salesContactNo: { type: String },
+    website: { type: String },
+    officePhone: { type: String },
+    country: { type: String },
+    isVerified: { type: Boolean, default: false },
+    isOwner: { type: Boolean, default: false },
+    isLoginUser: { type: Boolean, default: false },
+    youtubeUrl: { type: String },
+    linkedinUrl: { type: String },
+    facebookUrl: { type: String },
+    instagramUrl: { type: String },
+    twitterUrl: { type: String },
+    gstEnabled: { type: Boolean, default: false },
+    gstCompanyName: { type: String },
+    gstCompanyAddress: { type: String },
+    gstEmail: { type: String },
+    gstContactNo: { type: String },
+    cugPlatformSellingCharge: { type: Number, default: 0 },
+    cugPlatformBuyingCharge: { type: Number, default: 0 },
+    
+    // --- New Document Fields ---
+    documents: [
+      {
+        docName: { type: String },
+        docType: { type: String },
+        url: { type: String },
+        uploadedAt: { type: Date, default: Date.now }
+      }
+    ],
+    isApprovedDocument: { type: Boolean, default: false },
+
     resetPasswordToken: String,
     resetPasswordExpire: Date,
   },
