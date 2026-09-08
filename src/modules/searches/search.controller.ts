@@ -118,6 +118,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       gapiSupplier = await Supplier.findOne({ name: 'GAPI INFOTECH' }).lean();
     } catch(e) {}
 
+    let commissionPolicies: any[] = [];
+    try {
+      const CommissionPlan = require('../commissions/commission.model').CommissionPlan;
+      commissionPolicies = await CommissionPlan.find({ status: true, category: 'FLIGHT' })
+        .sort({ priority: 1 }).lean();
+    } catch (e) {
+      console.error("Error fetching commission policies", e);
+    }
+
     let cugMappings: any[] = [];
     if (isAgent && agentId) {
       try {
@@ -156,6 +165,45 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       }
 
       return true;
+    };
+
+    const applyAdminRevenuePolicy = (basePrice: number, airlineCode: string) => {
+      let adminMarkup = 0;
+      let adminCommission = 0;
+      
+      if (!commissionPolicies || commissionPolicies.length === 0) return { markup: 0, commission: 0 };
+      
+      const policy = commissionPolicies.find(p => p.airline === 'ALL' || p.airline === airlineCode);
+
+      if (policy && policy.fees) {
+        if (policy.fees.hiddenMarkup_checkbox) {
+          const mode = policy.fees.hiddenMarkup_pf || '%';
+          if (mode === '%') {
+             const pct = parseFloat(policy.fees.hiddenMarkup_gross) || 0;
+             adminMarkup += (basePrice * pct) / 100;
+          } else {
+             adminMarkup += parseFloat(policy.fees.hiddenMarkup_flat) || 0;
+          }
+        }
+        
+        const mgmtMode = policy.fees.managementFee_pf || '%';
+        if (mgmtMode === '%') {
+             const pct = parseFloat(policy.fees.managementFee_gross) || 0;
+             adminMarkup += (basePrice * pct) / 100;
+        } else {
+             adminMarkup += parseFloat(policy.fees.managementFee_flat) || 0;
+        }
+
+        const commMode = policy.fees.commission_pf || '%';
+        if (commMode === '%') {
+             const pct = parseFloat(policy.fees.commission_gross) || 0;
+             adminCommission = (basePrice * pct) / 100;
+        } else {
+             adminCommission = parseFloat(policy.fees.commission_flat) || 0;
+        }
+      }
+
+      return { markup: Math.round(adminMarkup), commission: Math.round(adminCommission) };
     };
 
     // Helper to calculate agent markup
@@ -211,7 +259,12 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           finalCommission = Math.max(percComm, nexusSupplier.commission.fixedAmount);
         }
         
-        const price = Math.round(basePrice + finalCommission);
+        const revPolicy = applyAdminRevenuePolicy(basePrice, leg.airline);
+        if (revPolicy.commission > 0) {
+           finalCommission = revPolicy.commission;
+        }
+        
+        const price = Math.round(basePrice + finalCommission + revPolicy.markup);
 
         return {
           _id: offer.key, // Use NexusDMC key so we can book it later
@@ -301,6 +354,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         
         let uploaderCommission = (sf.agentCommission || 0) * (adultCount + childCount);
         let adminCommission = 0;
+        let adminMarkupAmount = 0;
         let agentMarkupAmount = applyAgentMarkup(basePrice);
         
         // Match supplier by name (case-insensitive) since supplierId field stores User._id not Supplier._id
@@ -315,13 +369,18 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           uploaderCommission = 0;
           adminCommission = 0;
           agentMarkupAmount = 0;
-        } else if (supplier && supplier.commission) {
-          const percComm = (basePrice * supplier.commission.percentage) / 100;
-          adminCommission = Math.max(percComm, supplier.commission.fixedAmount);
+        } else {
+          if (supplier && supplier.commission) {
+            const percComm = (basePrice * supplier.commission.percentage) / 100;
+            adminCommission = Math.max(percComm, supplier.commission.fixedAmount);
+          }
+          const revPolicy = applyAdminRevenuePolicy(basePrice, sf.airline);
+          if (revPolicy.commission > 0) adminCommission = revPolicy.commission;
+          adminMarkupAmount = revPolicy.markup;
         }
 
-        // Base Price + Uploader Profit (if any) + Admin Commission + Searching Agent's markup
-        const price = basePrice + uploaderCommission + adminCommission + agentMarkupAmount; 
+        // Base Price + Uploader Profit (if any) + Admin Commission + Admin Markup + Searching Agent's markup
+        const price = basePrice + uploaderCommission + adminCommission + adminMarkupAmount + agentMarkupAmount; 
         
         // Final agentCommission to pass to booking is what Admin & Uploader earn from this sale
         const finalCommission = uploaderCommission + adminCommission;
@@ -400,9 +459,12 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
               const percComm = (basePrice * gapiSupplier.commission.percentage) / 100;
               finalCommission = Math.max(percComm, gapiSupplier.commission.fixedAmount);
             }
+            const revPolicy = applyAdminRevenuePolicy(basePrice, leg.airline.airlineCode);
+            if (revPolicy.commission > 0) finalCommission = revPolicy.commission;
+            
             const agentMarkupAmount = applyAgentMarkup(basePrice);
             
-            const price = Math.round(basePrice + finalCommission + agentMarkupAmount);
+            const price = Math.round(basePrice + finalCommission + revPolicy.markup + agentMarkupAmount);
             
             flights.push({
               _id: `GAPI_${onward.resultSessionId}`, // Save sessionId for fareQuote
@@ -499,7 +561,8 @@ export const getNearestFlightsData = async (from: string, to: string, targetDate
       origin: { $regex: new RegExp(`^${originIata}$`, 'i') },
       destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
       status: { $regex: new RegExp('^Active$', 'i') },
-      travelDate: { $gte: startOfDay }
+      travelDate: { $gte: startOfDay },
+      availableSeats: { $gt: 0 }
     };
 
     const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(5).lean();
@@ -730,7 +793,8 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
       origin: { $regex: new RegExp(`^${originIata}$`, 'i') },
       destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
       status: { $regex: new RegExp('^Active$', 'i') },
-      travelDate: { $gte: today, $lte: endDate }
+      travelDate: { $gte: today, $lte: endDate },
+      availableSeats: { $gt: 0 }
     }).lean();
 
     // 2. Fetch from standard DB Flights

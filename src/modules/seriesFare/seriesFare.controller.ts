@@ -541,10 +541,11 @@ export const getFDManifest = async (req: AuthRequest, res: Response) => {
     if (!seriesFare) return res.status(404).json({ message: 'Fixed Departure not found' });
 
     const Booking = require('../bookings/booking.model').default;
+    const sfObjectIdStr = seriesFare._id.toString();
     const searchKey = 'SF_' + seriesFare.sfId;
     const bookings = await Booking.find({
-      status: 'CONFIRMED',
-      'details.flight_keys': { $in: [searchKey, seriesFare.sfId] }
+      status: { $in: ['CONFIRMED', 'TICKETING_IN_PROGRESS', 'PENDING', 'ACTIVE'] },
+      'details.flight_keys': { $in: [`SF_${sfObjectIdStr}`, sfObjectIdStr, searchKey, seriesFare.sfId] }
     });
 
     let manifest: any[] = [];
@@ -560,7 +561,7 @@ export const getFDManifest = async (req: AuthRequest, res: Response) => {
             dob: pax.dob || '',
             type: pax.type || 'Adult',
             pnr: booking.details.pnr || booking.bookingId,
-            ticketId: '',
+            ticketId: booking.bookingId,
             passportNo: pax.passportNum || '',
             passportExpiry: pax.passportExpiry || '',
             passportIssuance: '',
