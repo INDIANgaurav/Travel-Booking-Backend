@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { protect, isAdminOrSubAdmin } from '../../middleware/auth.middleware';
 import {
   getServiceProviders, createServiceProvider, updateServiceProvider,
-  getRoles, createRole, deleteRole,
+  getRoles, createRole, updateRole, deleteRole,
   getPGMappings, createPGMapping, deletePGMapping,
   getDynamicPages, getDynamicPageByName, saveDynamicPage,
   getB2BAgents
@@ -25,6 +25,7 @@ router.put('/providers/:id', updateServiceProvider);
 // Roles
 router.get('/roles', getRoles);
 router.post('/roles', createRole);
+router.put('/roles/:id', updateRole);
 router.delete('/roles/:id', deleteRole);
 
 // PG Mappings

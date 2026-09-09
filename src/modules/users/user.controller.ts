@@ -57,6 +57,10 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
       if (req.body.contactRepresentative !== undefined) user.contactRepresentative = req.body.contactRepresentative;
       if (req.body.nameOnPan !== undefined) user.nameOnPan = req.body.nameOnPan;
       if (req.body.commGrp !== undefined) user.commGrp = req.body.commGrp;
+      if (req.body.city !== undefined) user.city = req.body.city;
+      if (req.body.state !== undefined) user.state = req.body.state;
+      if (req.body.officeAddress !== undefined) user.officeAddress = req.body.officeAddress;
+      if (req.body.pincode !== undefined) user.pincode = req.body.pincode;
       if (req.body.marqueesDetail !== undefined) user.marqueesDetail = req.body.marqueesDetail;
       if (req.body.negoMarqueesDetail !== undefined) user.negoMarqueesDetail = req.body.negoMarqueesDetail;
       if (req.body.salesContactNo !== undefined) user.salesContactNo = req.body.salesContactNo;
@@ -113,6 +117,7 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
         companyRole: updatedUser.companyRole,
         employeeSize: updatedUser.employeeSize,
         gstn: updatedUser.gstn,
+        walletBalance: updatedUser.walletBalance,
         creditBalance: updatedUser.creditBalance,
         resultExpiryTime: updatedUser.resultExpiryTime,
         otpTime: updatedUser.otpTime,
@@ -128,6 +133,10 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
         contactRepresentative: updatedUser.contactRepresentative,
         nameOnPan: updatedUser.nameOnPan,
         commGrp: updatedUser.commGrp,
+        city: updatedUser.city,
+        state: updatedUser.state,
+        officeAddress: updatedUser.officeAddress,
+        pincode: updatedUser.pincode,
         marqueesDetail: updatedUser.marqueesDetail,
         negoMarqueesDetail: updatedUser.negoMarqueesDetail,
         salesContactNo: updatedUser.salesContactNo,

@@ -29,16 +29,20 @@ const serviceProviderSchema = new Schema<IServiceProvider>({
 
 // 2. Role Master
 export interface IRoleMaster extends Document {
+  roleId: number;
   roleCode: string;
   roleDesc: string;
   isDefault: boolean;
+  permissions: string[];
   createdBy: mongoose.Types.ObjectId;
 }
 
 const roleMasterSchema = new Schema<IRoleMaster>({
+  roleId: { type: Number, unique: true },
   roleCode: { type: String, required: true, unique: true },
   roleDesc: { type: String, required: true },
   isDefault: { type: Boolean, default: false },
+  permissions: [{ type: String }],
   createdBy: { type: Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 

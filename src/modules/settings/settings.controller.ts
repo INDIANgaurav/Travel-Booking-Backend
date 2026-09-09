@@ -42,7 +42,15 @@ export const getRoles = async (req: Request, res: Response) => {
 
 export const createRole = async (req: Request, res: Response) => {
   try {
-    const role = await RoleMaster.create({ ...req.body, createdBy: (req as any).user._id });
+    // Generate numeric roleId starting from 100
+    const lastRole = await RoleMaster.findOne().sort({ roleId: -1 });
+    const nextRoleId = lastRole && lastRole.roleId ? lastRole.roleId + 1 : 100;
+
+    const role = await RoleMaster.create({ 
+      ...req.body, 
+      roleId: nextRoleId,
+      createdBy: (req as any).user._id 
+    });
     res.status(201).json({ success: true, data: role });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message });
@@ -53,6 +61,18 @@ export const deleteRole = async (req: Request, res: Response) => {
   try {
     await RoleMaster.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: 'Role deleted successfully' });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+export const updateRole = async (req: Request, res: Response) => {
+  try {
+    const role = await RoleMaster.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!role) {
+      return res.status(404).json({ success: false, message: 'Role not found' });
+    }
+    res.json({ success: true, data: role });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message });
   }

@@ -1,5 +1,5 @@
 import express from 'express';
-import { getUsers, getUserById, approveAgent, updateUser, createSubAdmin, createAgent, getAllBookings, deleteUser, getPendingQueue } from './admin.controller';
+import { getUsers, getUserById, approveAgent, updateUser, createSubAdmin, createAgent, getAllBookings, deleteUser, getPendingQueue, getPlatformInfo } from './admin.controller';
 import { 
   getAllOfflineBookings, updateOfflineBookingStatus,
   getAllTaxInvoices, updateTaxInvoiceStatus,
@@ -13,6 +13,8 @@ import { protect } from '../../middleware/auth.middleware';
 import { authorizeRoles, authorizeDepartments } from '../../middleware/rbac.middleware';
 
 const router = express.Router();
+
+router.get('/platform-info', getPlatformInfo);
 
 router.use(protect);
 

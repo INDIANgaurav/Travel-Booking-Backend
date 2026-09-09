@@ -273,3 +273,28 @@ export const getPendingQueue = async (req: Request, res: Response) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Get Platform Global Info
+// @route   GET /api/admin/platform-info
+// @access  Public
+export const getPlatformInfo = async (req: Request, res: Response) => {
+  try {
+    const adminUser = await User.findOne({ roles: 'SUPER_ADMIN' }).lean();
+    if (!adminUser) {
+      return res.status(404).json({ message: 'Platform info not available' });
+    }
+    
+    res.json({
+      companyName: adminUser.companyName || 'TRIPPECHALO INDIA PRIVATE LIMITED',
+      email: adminUser.email || 'trippechaloindia@gmail.com',
+      officePhone: adminUser.officePhone || '9555934205',
+      officeAddress: adminUser.officeAddress || 'D 42 Sector 108 Noida 201304',
+      panNumber: adminUser.panNumber || 'AAMCT8505A',
+      gstn: adminUser.gstn || '',
+      website: adminUser.website || 'trippechalo.com',
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
