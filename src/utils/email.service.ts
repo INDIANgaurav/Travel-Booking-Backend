@@ -11,8 +11,8 @@ const transporter = nodemailer.createTransport({
 });
 
 export const sendOTP = async (to: string, otp: string, expiryMinutes: number) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('⚠️ EMAIL_USER or EMAIL_PASS not set in .env. Skipping actual email send.');
+  if (!process.env.BREVO_API_KEY && (!process.env.EMAIL_USER || !process.env.EMAIL_PASS)) {
+    console.warn('⚠️ Neither BREVO_API_KEY nor (EMAIL_USER + EMAIL_PASS) are set in .env. Skipping actual email send.');
     console.log(`[Simulated Email] To: ${to}, OTP: ${otp}`);
     return;
   }
@@ -61,9 +61,47 @@ export const sendOTP = async (to: string, otp: string, expiryMinutes: number) =>
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`Email sent: ${info.messageId}`);
-    return info;
+    const brevoKey = process.env.BREVO_API_KEY;
+    console.log(`\n[Email Service] Attempting to send OTP email to ${to}...`);
+
+    if (brevoKey) {
+      console.log(`[Email Service] Using Brevo HTTP API (Port 443)...`);
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'api-key': brevoKey,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: {
+            name: "TrippeChalo Security",
+            email: process.env.EMAIL_USER || 'no-reply@trippechalo.com'
+          },
+          to: [{ email: to }],
+          subject: 'Your TrippeChalo Verification Code',
+          htmlContent: mailOptions.html
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Brevo API Error: ${errorText}`);
+      }
+      const data = await response.json();
+      console.log(`Email sent via Brevo API: ${data.messageId}`);
+      return data;
+    } else {
+      console.log(`[Email Service] Using Nodemailer (SMTP)...`);
+      const sendPromise = transporter.sendMail(mailOptions);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Email sending timed out after 6 seconds')), 6000);
+      });
+      
+      const info = await Promise.race([sendPromise, timeoutPromise]) as any;
+      console.log(`Email sent via Nodemailer: ${info.messageId}`);
+      return info;
+    }
   } catch (error) {
     console.error('Error sending email:', error);
     throw error;

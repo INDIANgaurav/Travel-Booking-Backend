@@ -15,30 +15,37 @@ export const registerUser = async (req: Request, res: Response) => {
   try {
     const { name, email, phone, password, role, department, companyName } = req.body;
 
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res.status(400).json({ message: 'User already exists' });
-    }
+    let user = await User.findOne({ email });
+    
+    if (user) {
+      if (user.isEmailVerified) {
+        return res.status(400).json({ message: 'User already exists and is verified. Please login.' });
+      }
+      // If user exists but is not verified, we'll update their details and resend OTP
+      user.name = name;
+      user.phone = phone;
+      user.password = password; // Will be hashed in pre-save hook
+      user.roles = [role || 'USER'];
+      user.department = role === 'SUB_ADMIN' ? department : null;
+      user.companyName = role === 'B2B_AGENT' ? companyName : null;
+      user.agentStatus = role === 'B2B_AGENT' ? 'PENDING' : undefined;
+    } else {
+      let agentStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE' | undefined = undefined;
+      if (role === 'B2B_AGENT') {
+        agentStatus = 'PENDING';
+      }
 
-    if (role === 'SUPER_ADMIN' || role === 'SUB_ADMIN') {
-      return res.status(403).json({ message: 'Cannot register admin roles publicly' });
+      user = await User.create({
+        name,
+        email,
+        phone,
+        password,
+        roles: [role || 'USER'],
+        department: role === 'SUB_ADMIN' ? department : null,
+        companyName: role === 'B2B_AGENT' ? companyName : null,
+        agentStatus
+      });
     }
-
-    let agentStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'INCOMPLETE' | undefined = undefined;
-    if (role === 'B2B_AGENT') {
-      agentStatus = 'PENDING';
-    }
-
-    const user = await User.create({
-      name,
-      email,
-      phone,
-      password,
-      roles: [role || 'USER'],
-      department: role === 'SUB_ADMIN' ? department : null,
-      companyName: role === 'B2B_AGENT' ? companyName : null,
-      agentStatus
-    });
 
     if (user) {
       // Auto-dispatch OTP email synchronously before sending response
@@ -49,7 +56,20 @@ export const registerUser = async (req: Request, res: Response) => {
       user.otp = otpCode;
       user.otpExpiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
       await user.save();
-      await sendOTP(user.email, otpCode, expiryMinutes);
+      
+      console.log(`\n======================================================`);
+      console.log(`🔑 [TESTING] GENERATED OTP FOR ${user.email} : ${otpCode}`);
+      console.log(`======================================================\n`);
+      
+      try {
+        await sendOTP(user.email, otpCode, expiryMinutes);
+      } catch (emailError: any) {
+        // If it's a new user and email fails, delete them so they aren't stuck
+        if (user.isNew || !user.isEmailVerified) {
+           await User.deleteOne({ _id: user._id });
+        }
+        return res.status(500).json({ message: 'Failed to send OTP email. Please try again later or check your email settings.' });
+      }
 
       res.status(201).json({
         _id: user.id,
@@ -58,8 +78,8 @@ export const registerUser = async (req: Request, res: Response) => {
         roles: user.roles,
         department: user.department,
         agentStatus: user.agentStatus,
-        message: 'OTP sent to email. Please verify.',
-        requiresOtpVerification: true
+        isEmailVerified: user.isEmailVerified,
+        message: 'OTP sent to your email. Please verify to complete registration.'
       });
     } else {
       res.status(400).json({ message: 'Invalid user data' });
