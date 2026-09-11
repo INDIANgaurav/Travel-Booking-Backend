@@ -10,6 +10,9 @@ import SeriesFare from '../seriesFare/seriesFare.model';
 import Supplier from '../supplier/supplier.model';
 import { Request } from 'express';
 
+// In-memory cache for flight search results
+const flightSearchCache = new Map<string, { data: any, timestamp: number }>();
+
 // @desc    Get recent searches for user
 // @route   GET /api/searches/recent
 // @access  Private
@@ -689,7 +692,25 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
     }
     console.log("✈️ Flight Search Request Received:", req.query);
 
+    // Get Admin config for caching timeout
+    const admin = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
+    const expiryMins = admin?.resultExpiryTime || 20; // Default 20 mins
+
+    // Create unique cache key based on query params and user context
+    const cacheKey = JSON.stringify({ ...req.query, isAgent, agentId });
+    const cachedResult = flightSearchCache.get(cacheKey);
+
+    if (cachedResult && (Date.now() - cachedResult.timestamp < expiryMins * 60 * 1000)) {
+      console.log(`[CACHE HIT] Returning cached flights. Expiry is set to ${expiryMins} mins.`);
+      return res.json(cachedResult.data);
+    }
+
+    console.log(`[CACHE MISS] Fetching fresh flights...`);
     const flights = await getFlightsData(req.query, isAgent, agentId);
+    
+    // Save to cache
+    flightSearchCache.set(cacheKey, { data: flights, timestamp: Date.now() });
+
     res.json(flights);
   } catch (error: any) {
     console.error("Flight Search Catch Error:", error);

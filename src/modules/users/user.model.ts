@@ -23,7 +23,6 @@ const userSchema = new Schema<IUser>(
     },
     roles: {
       type: [String],
-      enum: ['SUPER_ADMIN', 'SUB_ADMIN', 'B2B_AGENT', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF', 'USER'],
       default: ['USER'],
     },
     department: {
@@ -175,6 +174,8 @@ const userSchema = new Schema<IUser>(
 
     resetPasswordToken: String,
     resetPasswordExpire: Date,
+    otp: { type: String },
+    otpExpiry: { type: Date }
   },
   {
     timestamps: true,

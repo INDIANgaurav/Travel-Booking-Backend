@@ -1,6 +1,6 @@
 import { Document } from 'mongoose';
 
-export type Role = 'SUPER_ADMIN' | 'SUB_ADMIN' | 'B2B_AGENT' | 'SUPPLIER_AGENT' | 'SUPPLIER_STAFF' | 'USER';
+export type Role = 'SUPER_ADMIN' | 'SUB_ADMIN' | 'B2B_AGENT' | 'SUPPLIER_AGENT' | 'SUPPLIER_STAFF' | 'USER' | string;
 export type Department = 'Sales' | 'Operations' | 'Customer Support' | 'Accounts' | null;
 
 export interface IUser extends Document {
@@ -97,6 +97,8 @@ export interface IUser extends Document {
   matchPassword(enteredPassword: string): Promise<boolean>;
   resetPasswordToken?: string;
   resetPasswordExpire?: Date;
+  otp?: string;
+  otpExpiry?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import User from '../users/user.model';
 import { getAuth } from 'firebase-admin/auth';
 import { getApps } from 'firebase-admin/app';
+import { sendOTP } from '../../utils/email.service';
 
 const generateToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
@@ -40,6 +41,16 @@ export const registerUser = async (req: Request, res: Response) => {
     });
 
     if (user) {
+      // Auto-dispatch OTP email synchronously before sending response
+      const config = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
+      const expiryMinutes = config?.otpTime || 10;
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      
+      user.otp = otpCode;
+      user.otpExpiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
+      await user.save();
+      await sendOTP(user.email, otpCode, expiryMinutes);
+
       res.status(201).json({
         _id: user.id,
         name: user.name,
@@ -47,7 +58,8 @@ export const registerUser = async (req: Request, res: Response) => {
         roles: user.roles,
         department: user.department,
         agentStatus: user.agentStatus,
-        token: generateToken(user.id),
+        message: 'OTP sent to email. Please verify.',
+        requiresOtpVerification: true
       });
     } else {
       res.status(400).json({ message: 'Invalid user data' });
@@ -128,6 +140,14 @@ export const loginUser = async (req: Request, res: Response) => {
     if (user && (await user.matchPassword(password))) {
       if (!user.isActive) {
         return res.status(401).json({ message: 'Account has been deactivated', status: 'INACTIVE' });
+      }
+
+      if (user.roles.includes('USER') && !user.isEmailVerified) {
+        return res.status(401).json({ 
+          message: 'Please verify your email first. Use the OTP sent to your email.', 
+          status: 'UNVERIFIED', 
+          userId: user.id 
+        });
       }
 
       if ((user.roles.includes('B2B_AGENT') || user.roles.includes('SUPPLIER_AGENT')) && user.agentStatus !== 'APPROVED') {
@@ -238,25 +258,20 @@ export const forgotPassword = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    const resetToken = crypto.randomBytes(20).toString('hex');
-    const resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-    
-    // Set token expire to 10 minutes
-    const resetPasswordExpire = new Date(Date.now() + 10 * 60 * 1000);
+    const config = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
+    const expiryMinutes = config?.otpTime || 10;
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    user.resetPasswordToken = resetPasswordToken;
-    user.resetPasswordExpire = resetPasswordExpire;
+    user.otp = otpCode;
+    user.otpExpiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
     await user.save();
 
-    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password/${resetToken}`;
+    await sendOTP(user.email, otpCode, expiryMinutes);
 
-    // For local dev, we return the token/url directly since we don't have email setup
     res.status(200).json({ 
       success: true, 
-      message: 'Password reset link generated',
-      data: resetUrl
+      message: 'OTP sent successfully to your email'
     });
-
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
@@ -264,23 +279,79 @@ export const forgotPassword = async (req: Request, res: Response) => {
 
 export const resetPassword = async (req: Request, res: Response) => {
   try {
-    const resetPasswordToken = crypto.createHash('sha256').update(req.params.resettoken as string).digest('hex');
+    const { email, otp, password } = req.body;
 
-    const user = await User.findOne({
-      resetPasswordToken,
-      resetPasswordExpire: { $gt: new Date() }
-    });
+    const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(400).json({ message: 'Invalid or expired reset token' });
+      return res.status(404).json({ message: 'User not found' });
     }
 
-    user.password = req.body.password;
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpire = undefined;
+    if (!user.otp || !user.otpExpiry) {
+      return res.status(400).json({ message: 'No OTP generated for this user' });
+    }
+
+    if (Date.now() > user.otpExpiry.getTime()) {
+      return res.status(400).json({ message: 'OTP has expired' });
+    }
+
+    if (user.otp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    user.password = password;
+    user.otp = undefined;
+    user.otpExpiry = undefined;
     await user.save();
 
     res.status(200).json({ success: true, message: 'Password reset successful' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const verifyRegistration = async (req: Request, res: Response) => {
+  try {
+    const { userId, otp } = req.body;
+
+    if (!userId || !otp) {
+      return res.status(400).json({ message: 'User ID and OTP are required' });
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.isEmailVerified) {
+      return res.status(400).json({ message: 'Email is already verified' });
+    }
+
+    if (!user.otp || user.otp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    if (user.otpExpiry && new Date() > new Date(user.otpExpiry)) {
+      return res.status(400).json({ message: 'OTP has expired' });
+    }
+
+    // Mark as verified and clear OTP
+    user.isEmailVerified = true;
+    user.otp = undefined;
+    user.otpExpiry = undefined;
+    await user.save();
+
+    res.json({
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      roles: user.roles,
+      department: user.department,
+      companyName: user.companyName,
+      supplierOwnerId: user.supplierOwnerId,
+      token: generateToken(user.id),
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }

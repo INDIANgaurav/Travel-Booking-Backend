@@ -189,26 +189,68 @@ export const changePassword = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// @desc    Simulate OTP Verification
+import { sendOTP } from '../../utils/email.service';
+
+// Helper to get global configuration from SUPER_ADMIN
+export const getGlobalConfig = async () => {
+  const admin = await User.findOne({ role: 'SUPER_ADMIN' });
+  return admin || { otpTime: 10, resultExpiryTime: 20, requiredTravelDate: false };
+};
+
+// @desc    Generate and Send OTP
+// @route   POST /api/users/generate-otp
+// @access  Private
+export const generateOtp = async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const config = await getGlobalConfig();
+    const expiryMinutes = config.otpTime || 10;
+    
+    // Generate 6-digit OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    user.otp = otpCode;
+    user.otpExpiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
+    await user.save();
+
+    await sendOTP(user.email, otpCode, expiryMinutes);
+    
+    res.json({ message: 'OTP sent successfully to email' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Verify OTP
 // @route   POST /api/users/verify
 // @access  Private
 export const verifyOtp = async (req: AuthRequest, res: Response) => {
   try {
-    const { type, otp } = req.body; // type: 'email' or 'phone'
+    const { type, otp } = req.body;
     const user = await User.findById(req.user._id);
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    console.log(`[OTP SIMULATION] Verifying ${type} for user ${user.email} with OTP: ${otp}`);
+    if (!user.otp || !user.otpExpiry) {
+      return res.status(400).json({ message: 'No OTP generated' });
+    }
 
-    // Simulate OTP check (Assume '123456' is the correct OTP for testing)
-    if (otp === '123456') {
+    if (Date.now() > user.otpExpiry.getTime()) {
+      return res.status(400).json({ message: 'OTP has expired' });
+    }
+
+    if (user.otp === otp) {
       if (type === 'email') user.isEmailVerified = true;
       if (type === 'phone') user.isPhoneVerified = true;
       
+      user.otp = undefined;
+      user.otpExpiry = undefined;
       await user.save();
+      
       res.json({ message: `${type} verified successfully` });
     } else {
       res.status(400).json({ message: 'Invalid OTP' });

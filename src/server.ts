@@ -79,7 +79,6 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/cms', cmsRoutes);
 app.use('/api/hotels', hotelRoutes);
 app.use('/api/series-fare', seriesFareRoutes);
-app.get('/api/test-supplier', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/group-bookings', groupBookingRoutes);
 

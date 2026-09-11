@@ -3,6 +3,7 @@ import {
   getUserProfile, 
   updateUserProfile, 
   changePassword, 
+  generateOtp,
   verifyOtp, 
   addSavedTraveller, 
   submitAgentOnboarding,
@@ -26,6 +27,7 @@ router.route('/profile')
 
 router.put('/security/password', changePassword);
 router.put('/change-password', changePassword); // Keeping old one for fallback
+router.post('/generate-otp', generateOtp);
 router.post('/verify', verifyOtp);
 router.post('/travellers', addSavedTraveller);
 
