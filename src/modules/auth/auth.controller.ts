@@ -204,6 +204,7 @@ export const loginUser = async (req: Request, res: Response) => {
         department: user.department,
         companyName: user.companyName,
         supplierOwnerId: user.supplierOwnerId,
+        avatar: user.avatar,
         token: generateToken(user.id),
       });
     } else {
@@ -389,6 +390,7 @@ export const verifyRegistration = async (req: Request, res: Response) => {
       department: user.department,
       companyName: user.companyName,
       supplierOwnerId: user.supplierOwnerId,
+      avatar: user.avatar,
       token: generateToken(user.id),
     });
   } catch (error: any) {
