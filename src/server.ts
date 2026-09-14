@@ -1,4 +1,6 @@
 import express from 'express';
+import http from 'http';
+import { initSocket } from './config/socket';
 import dotenv from 'dotenv';
 dotenv.config();
 import cors from 'cors';
@@ -48,6 +50,8 @@ connectDB().then(() => {
 });
 
 const app = express();
+const server = http.createServer(app);
+initSocket(server);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
@@ -110,7 +114,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
  

@@ -4,6 +4,7 @@ import User from '../users/user.model';
 import { getAuth } from 'firebase-admin/auth';
 import { getApps } from 'firebase-admin/app';
 import { sendOTP } from '../../utils/email.service';
+import { getIo } from '../../config/socket';
 
 const generateToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
@@ -45,6 +46,15 @@ export const registerUser = async (req: Request, res: Response) => {
         companyName: role === 'B2B_AGENT' ? companyName : null,
         agentStatus
       });
+
+      const io = getIo();
+      if (io) {
+        io.to('admin_dashboard').emit('activity', {
+          message: `New ${role === 'B2B_AGENT' ? 'Agent' : 'User'} Registered: ${name}`,
+          type: 'USER',
+          timestamp: new Date()
+        });
+      }
     }
 
     if (user) {
@@ -141,6 +151,15 @@ export const registerAgent = async (req: Request, res: Response) => {
       agentStatus: 'PENDING_APPROVAL',
       isApproved: false,
     });
+
+    const io = getIo();
+    if (io) {
+      io.to('admin_dashboard').emit('activity', {
+        message: `New Supplier Agent Registered: ${name}`,
+        type: 'USER',
+        timestamp: new Date()
+      });
+    }
 
     res.status(201).json({
       message: 'Agent registration submitted successfully. Please wait for Admin approval.',

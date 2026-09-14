@@ -7,6 +7,8 @@ import crypto from 'crypto';
 import { bookFlight } from '../flights/nexusdmc.service';
 import { bookFlight as bookFlightGapi, getBookingDetails as getBookingDetailsGapi } from '../flights/gapi.service';
 import SeriesFare from '../seriesFare/seriesFare.model';
+import mongoose from 'mongoose';
+import { getIo } from '../../config/socket';
 import User from '../users/user.model';
 import Transaction from '../wallet/wallet.model';
 
@@ -422,6 +424,15 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
 
       await newBooking.save();
 
+      const io = getIo();
+      if (io) {
+        io.to('admin_dashboard').emit('activity', {
+          message: `New Flight Booking created (ID: ${newBooking.bookingId}) - ₹${newBooking.totalAmount}`,
+          type: 'BOOKING',
+          timestamp: new Date()
+        });
+      }
+
       return res.status(201).json({
         booking: newBooking,
         message: 'Booking confirmed using wallet balance'
@@ -457,6 +468,15 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
     });
 
     await newBooking.save();
+
+    const io = getIo();
+    if (io) {
+      io.to('admin_dashboard').emit('activity', {
+        message: `New Flight Booking created (ID: ${newBooking.bookingId}) - ₹${newBooking.totalAmount}`,
+        type: 'BOOKING',
+        timestamp: new Date()
+      });
+    }
 
     res.status(201).json({
       booking: newBooking,

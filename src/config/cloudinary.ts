@@ -1,4 +1,4 @@
-﻿import { v2 as cloudinary } from 'cloudinary';
+import { v2 as cloudinary } from 'cloudinary';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import multer from 'multer';
 
@@ -18,4 +18,15 @@ const storage = new CloudinaryStorage({
   } as any
 });
 
+const avatarStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'TrippeChalo_Profiles',
+    allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+    transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }]
+  } as any
+});
+
 export const upload = multer({ storage: storage });
+export const avatarUpload = multer({ storage: avatarStorage });
+export { cloudinary };

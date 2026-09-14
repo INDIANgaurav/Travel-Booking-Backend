@@ -40,6 +40,69 @@ export const getUsers = async (req: Request, res: Response) => {
   }
 };
 
+export const getDashboardStats = async (req: Request, res: Response) => {
+  try {
+    const totalUsers = await User.countDocuments({ roles: { $ne: 'SUPER_ADMIN' } });
+    const agents = await User.find({ roles: 'B2B_AGENT' }).select('name walletBalance creditBalance agentStatus');
+    
+    const totalWalletBalance = agents.reduce((sum, a) => sum + (a.walletBalance || 0), 0);
+    const totalCreditBalance = agents.reduce((sum, a) => sum + (a.creditBalance || 0), 0);
+    const systemFunds = totalWalletBalance + totalCreditBalance;
+
+    const bookings = await Booking.find({ status: 'CONFIRMED' }).select('totalAmount type createdAt user');
+    
+    const revenueByCategory = { FLIGHT: 0, HOTEL: 0, PACKAGE: 0, BUS: 0 };
+    let totalRevenue = 0;
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const revMap: Record<string, number> = {};
+    const agentSalesMap: Record<string, number> = {};
+
+    bookings.forEach(b => {
+      totalRevenue += b.totalAmount || 0;
+      if (b.type && (revenueByCategory as any)[b.type] !== undefined) {
+        (revenueByCategory as any)[b.type] += b.totalAmount || 0;
+      }
+      
+      if (b.createdAt) {
+        const monthName = months[b.createdAt.getMonth()];
+        revMap[monthName] = (revMap[monthName] || 0) + (b.totalAmount || 0);
+      }
+
+      if (b.user) {
+        agentSalesMap[b.user.toString()] = (agentSalesMap[b.user.toString()] || 0) + 1;
+      }
+    });
+
+    const monthlyRevenue = Object.entries(revMap).map(([name, revenue]) => ({ name, revenue }));
+    monthlyRevenue.sort((a, b) => months.indexOf(a.name) - months.indexOf(b.name));
+    if (monthlyRevenue.length === 0) monthlyRevenue.push({ name: months[new Date().getMonth()], revenue: 0 });
+
+    const topAgents = agents.map(a => ({
+      name: a.name,
+      sales: agentSalesMap[a._id.toString()] || 0
+    })).sort((a, b) => b.sales - a.sales).slice(0, 5);
+
+    res.json({
+      totalUsers,
+      totalBookings: bookings.length,
+      totalRevenue,
+      systemFunds,
+      totalWalletBalance,
+      totalCreditBalance,
+      revenueByCategory: [
+        { name: 'Flights', value: revenueByCategory.FLIGHT, color: '#3b82f6' },
+        { name: 'Hotels', value: revenueByCategory.HOTEL, color: '#10b981' },
+        { name: 'Packages', value: revenueByCategory.PACKAGE, color: '#8b5cf6' },
+        { name: 'Buses', value: revenueByCategory.BUS, color: '#f59e0b' },
+      ].filter(item => item.value > 0),
+      monthlyRevenue,
+      topAgents
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 import Booking from '../bookings/booking.model';
 
 export const getAllBookings = async (req: Request, res: Response) => {

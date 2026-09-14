@@ -11,9 +11,12 @@ import {
   addSupplierStaff,
   updateSupplierStaff,
   deleteSupplierStaff,
-  syncDomainCache
+  syncDomainCache,
+  uploadProfilePicture,
+  deleteProfilePicture
 } from './user.controller';
 import { protect } from '../../middleware/auth.middleware';
+import { avatarUpload } from '../../config/cloudinary';
 
 const router = express.Router();
 
@@ -24,6 +27,10 @@ router.post('/sync-domain-cache', syncDomainCache);
 router.route('/profile')
   .get(getUserProfile)
   .put(updateUserProfile);
+
+router.route('/profile-picture')
+  .put(avatarUpload.single('avatar'), uploadProfilePicture)
+  .delete(deleteProfilePicture);
 
 router.put('/security/password', changePassword);
 router.put('/change-password', changePassword); // Keeping old one for fallback

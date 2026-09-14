@@ -1,5 +1,5 @@
 import express from 'express';
-import { getUsers, getUserById, approveAgent, updateUser, createSubAdmin, createAgent, getAllBookings, deleteUser, getPendingQueue, getPlatformInfo } from './admin.controller';
+import { getUsers, getUserById, approveAgent, updateUser, createSubAdmin, createAgent, getAllBookings, deleteUser, getPendingQueue, getPlatformInfo, getDashboardStats } from './admin.controller';
 import { 
   getAllOfflineBookings, updateOfflineBookingStatus,
   getAllTaxInvoices, updateTaxInvoiceStatus,
@@ -21,6 +21,7 @@ router.use(protect);
 router.get('/users', authorizeRoles('SUPER_ADMIN', 'SUB_ADMIN'), getUsers);
 router.get('/bookings', authorizeRoles('SUPER_ADMIN', 'SUB_ADMIN'), getAllBookings);
 router.get('/pending-queue', authorizeRoles('SUPER_ADMIN', 'SUB_ADMIN'), getPendingQueue);
+router.get('/dashboard-stats', authorizeRoles('SUPER_ADMIN', 'SUB_ADMIN'), getDashboardStats);
 
 router.put(
   '/agents/:id/approve',

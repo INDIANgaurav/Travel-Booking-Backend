@@ -159,11 +159,97 @@ export const updateUserProfile = async (req: AuthRequest, res: Response) => {
         cugPlatformSellingCharge: updatedUser.cugPlatformSellingCharge,
         cugPlatformBuyingCharge: updatedUser.cugPlatformBuyingCharge,
         documents: updatedUser.documents,
-        isApprovedDocument: updatedUser.isApprovedDocument,
+        isApprovedDocument: updatedUser.isApprovedDocument
       });
     } else {
       res.status(404).json({ message: 'User not found' });
     }
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Upload profile picture
+// @route   PUT /api/users/profile-picture
+// @access  Private
+export const uploadProfilePicture = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image provided' });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Delete old avatar from Cloudinary if it exists
+    if (user.avatar && user.avatar.includes('cloudinary.com')) {
+      try {
+        // Example URL: https://res.cloudinary.com/cloud_name/image/upload/v1234/folder_name/image_name.jpg
+        const parts = user.avatar.split('/');
+        const filename = parts.pop()?.split('.')[0];
+        const folder = parts.pop();
+        if (filename && folder) {
+          const public_id = `${folder}/${filename}`;
+          const { cloudinary } = await import('../../config/cloudinary');
+          await cloudinary.uploader.destroy(public_id);
+        }
+      } catch (err) {
+        console.error('Failed to delete old avatar from Cloudinary:', err);
+      }
+    }
+
+    user.avatar = req.file.path; // Cloudinary secure_url
+    const updatedUser = await user.save();
+
+    res.json({
+      _id: updatedUser._id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      roles: updatedUser.roles,
+      avatar: updatedUser.avatar
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Delete profile picture
+// @route   DELETE /api/users/profile-picture
+// @access  Private
+export const deleteProfilePicture = async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.avatar && user.avatar.includes('cloudinary.com')) {
+      try {
+        const parts = user.avatar.split('/');
+        const filename = parts.pop()?.split('.')[0];
+        const folder = parts.pop();
+        if (filename && folder) {
+          const public_id = `${folder}/${filename}`;
+          const { cloudinary } = await import('../../config/cloudinary');
+          await cloudinary.uploader.destroy(public_id);
+        }
+      } catch (err) {
+        console.error('Failed to delete avatar from Cloudinary:', err);
+      }
+    }
+
+    user.avatar = '';
+    const updatedUser = await user.save();
+
+    res.json({
+      _id: updatedUser._id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      roles: updatedUser.roles,
+      avatar: updatedUser.avatar
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
