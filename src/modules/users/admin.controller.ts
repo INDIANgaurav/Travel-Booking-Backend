@@ -77,9 +77,12 @@ export const getDashboardStats = async (req: Request, res: Response) => {
     monthlyRevenue.sort((a, b) => months.indexOf(a.name) - months.indexOf(b.name));
     if (monthlyRevenue.length === 0) monthlyRevenue.push({ name: months[new Date().getMonth()], revenue: 0 });
 
-    const topAgents = agents.map(a => ({
-      name: a.name,
-      sales: agentSalesMap[a._id.toString()] || 0
+    const userIdsWithSales = Object.keys(agentSalesMap);
+    const usersWithSales = await User.find({ _id: { $in: userIdsWithSales } }).select('name companyName');
+    
+    const topAgents = usersWithSales.map(u => ({
+      name: u.companyName || u.name,
+      sales: agentSalesMap[u._id.toString()] || 0
     })).sort((a, b) => b.sales - a.sales).slice(0, 5);
 
     res.json({

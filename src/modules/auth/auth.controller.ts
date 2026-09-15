@@ -46,15 +46,15 @@ export const registerUser = async (req: Request, res: Response) => {
         companyName: role === 'B2B_AGENT' ? companyName : null,
         agentStatus
       });
+    }
 
-      const io = getIo();
-      if (io) {
-        io.to('admin_dashboard').emit('activity', {
-          message: `New ${role === 'B2B_AGENT' ? 'Agent' : 'User'} Registered: ${name}`,
-          type: 'USER',
-          timestamp: new Date()
-        });
-      }
+    const io = getIo();
+    if (io) {
+      io.to('admin_dashboard').emit('activity', {
+        message: `New ${role === 'B2B_AGENT' ? 'Agent' : 'User'} Registered: ${name}`,
+        type: 'USER',
+        timestamp: new Date()
+      });
     }
 
     if (user) {
@@ -261,6 +261,15 @@ export const googleAuth = async (req: Request, res: Response) => {
         isEmailVerified: true,
         agentStatus
       });
+
+      const io = getIo();
+      if (io) {
+        io.to('admin_dashboard').emit('activity', {
+          message: `New ${role === 'B2B_AGENT' ? 'Agent' : 'User'} Registered (Google): ${name || 'User'}`,
+          type: 'USER',
+          timestamp: new Date()
+        });
+      }
     }
 
     if (!user.isActive) {

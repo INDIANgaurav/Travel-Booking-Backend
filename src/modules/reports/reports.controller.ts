@@ -57,7 +57,9 @@ export const getFlightSales = async (req: Request, res: Response) => {
           txid: { $ifNull: ['$razorpayPaymentId', ''] },
           sf: { $ifNull: ['$details.sf', 0] },
           fareType: { $ifNull: ['$details.fareType', ''] },
-          remarks: { $ifNull: ['$details.remarks', ''] }
+          remarks: { $ifNull: ['$details.remarks', ''] },
+          agentName: { $ifNull: ['$agent.name', 'User'] },
+          companyName: { $ifNull: ['$agent.companyName', 'B2C User'] }
       }}
     ];
 
@@ -250,16 +252,16 @@ export const getDebitNotes = async (req: Request, res: Response) => {
       { $limit: Number(limit) },
       { $project: {
           id: '$_id',
-          date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          date: { $dateToString: { format: "%Y-%m-%d", date: { $ifNull: ['$date', new Date()] } } },
           txid: '$_id',
-          refId: '$referenceNo',
-          pnr: '$pnr',
-          type: '$description',
+          refId: { $ifNull: ['$referenceNo', 'N/A'] },
+          pnr: { $ifNull: ['$pnr', 'N/A'] },
+          type: { $ifNull: ['$description', 'DEBIT'] },
           debitBy: { $literal: 'Admin' },
-          debitTo: '$agent.name',
-          amount: '$amount',
-          remarks: '$description',
-          company: '$agent.companyName'
+          debitTo: { $ifNull: ['$agent.name', 'User'] },
+          amount: { $ifNull: ['$amount', 0] },
+          remarks: { $ifNull: ['$description', ''] },
+          companyName: { $ifNull: ['$agent.companyName', ''] }
       }}
     ]);
     
@@ -297,15 +299,16 @@ export const getCreditNotes = async (req: Request, res: Response) => {
       { $limit: Number(limit) },
       { $project: {
           id: '$_id',
-          date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          date: { $dateToString: { format: "%Y-%m-%d", date: { $ifNull: ['$date', new Date()] } } },
           txid: '$_id',
           refId: { $ifNull: ['$referenceNo', 'N/A'] },
           pnr: { $ifNull: ['$pnr', 'N/A'] },
-          type: '$description',
+          type: { $ifNull: ['$description', 'CREDIT'] },
           creditBy: { $literal: 'Admin' },
-          creditTo: { $ifNull: ['$agent.companyName', '$agent.name'] },
-          amount: '$amount',
-          remarks: '$description'
+          creditTo: { $ifNull: ['$agent.name', 'User'] },
+          amount: { $ifNull: ['$amount', 0] },
+          remarks: { $ifNull: ['$description', ''] },
+          companyName: { $ifNull: ['$agent.companyName', ''] }
       }}
     ]);
     
@@ -313,6 +316,7 @@ export const getCreditNotes = async (req: Request, res: Response) => {
 
     return res.status(200).json({ success: true, data, total });
   } catch (error) {
+    console.error(error);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
