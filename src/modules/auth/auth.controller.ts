@@ -3,8 +3,9 @@ import jwt from 'jsonwebtoken';
 import User from '../users/user.model';
 import { getAuth } from 'firebase-admin/auth';
 import { getApps } from 'firebase-admin/app';
-import { sendOTP } from '../../utils/email.service';
+import { sendOTP, sendWelcomeEmail } from '../../utils/email.service';
 import { getIo } from '../../config/socket';
+import { createAdminNotification } from '../notifications/notification.controller';
 
 const generateToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
@@ -160,6 +161,13 @@ export const registerAgent = async (req: Request, res: Response) => {
         timestamp: new Date()
       });
     }
+
+    await createAdminNotification(
+      'New Agent Registration',
+      `${name} has applied to become an agent.`,
+      'AGENT_REGISTRATION',
+      '/admin/pending-users'
+    );
 
     res.status(201).json({
       message: 'Agent registration submitted successfully. Please wait for Admin approval.',
@@ -390,6 +398,13 @@ export const verifyRegistration = async (req: Request, res: Response) => {
     user.otp = undefined;
     user.otpExpiry = undefined;
     await user.save();
+
+    // Send Welcome Email
+    try {
+      await sendWelcomeEmail(user.email, user.name || 'User');
+    } catch (e) {
+      console.error('Failed to send welcome email:', e);
+    }
 
     res.json({
       _id: user.id,

@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import Booking from './booking.model';
 import User from '../users/user.model';
 import Transaction from '../wallet/wallet.model';
+import { sendCancellationEmail } from '../../utils/email.service';
+
 // 1. Agent initiates cancellation
 export const initiateCancellation = async (req: Request, res: Response) => {
   try {
@@ -137,6 +139,17 @@ export const processCancellation = async (req: Request, res: Response) => {
     }
 
     await booking.save();
+
+    try {
+      await sendCancellationEmail(
+        user.email,
+        user.name || 'Agent',
+        booking.details?.pnr || booking.bookingId,
+        refundAmount
+      );
+    } catch (e) {
+      console.error('Failed to send cancellation email:', e);
+    }
 
     res.status(200).json({ message: 'Cancellation processed successfully', booking, refundAmount });
   } catch (error: any) {

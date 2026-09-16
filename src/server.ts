@@ -42,6 +42,7 @@ import promoRoutes from './modules/promos/promo.routes';
 import cancellationRoutes from './modules/bookings/cancellation.routes';
 import ticketRoutes from './modules/tickets/ticket.routes';
 import groupBookingRoutes from './modules/bookings/groupBooking.routes';
+import notificationRoutes from './modules/notifications/notification.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
@@ -73,6 +74,7 @@ const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200, message: 'Too
 app.use('/api/', apiLimiter);
 
 app.use('/api/auth', authRoutes);
+app.use('/api/admin/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/agents', agentRoutes);
@@ -97,7 +99,6 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/credit-notes', creditNoteRoutes);
 app.use('/api/account-statement', accountStatementRoutes);
 app.use('/api/ai', aiRoutes);
-app.use('/api/suppliers', supplierRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/finance', financeRoutes);

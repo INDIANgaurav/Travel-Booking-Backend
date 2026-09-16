@@ -3,6 +3,7 @@ import { AuthRequest } from '../../middleware/auth.middleware';
 import GroupBooking from './groupBooking.model';
 import User from '../users/user.model';
 import Transaction from '../wallet/wallet.model';
+import { createAdminNotification } from '../notifications/notification.controller';
 import mongoose from 'mongoose';
 
 // Agent: Create a new RFQ (Request for Quote)
@@ -23,6 +24,14 @@ export const createGroupBookingRequest = async (req: AuthRequest, res: Response)
     });
 
     await newRequest.save();
+
+    await createAdminNotification(
+      'New Group Booking Request',
+      `${req.user.name} requested ${requestedSeats.total} seats for a group booking.`,
+      'SYSTEM',
+      '/admin/group-bookings'
+    );
+
     res.status(201).json({ message: 'Group booking request submitted successfully', request: newRequest });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

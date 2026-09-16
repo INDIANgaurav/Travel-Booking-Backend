@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { OfflineBooking } from './offlineBooking.model';
+import { createAdminNotification } from '../notifications/notification.controller';
 
 export const submitOfflineBooking = async (req: Request, res: Response) => {
   try {
@@ -12,6 +13,14 @@ export const submitOfflineBooking = async (req: Request, res: Response) => {
     });
 
     const savedBooking = await newBooking.save();
+
+    await createAdminNotification(
+      'B2B Offline Booking Request',
+      `A new offline booking request has been submitted by an agent.`,
+      'SYSTEM',
+      '/admin/bookings'
+    );
+
     res.status(201).json({ message: 'Offline booking request submitted successfully', booking: savedBooking });
   } catch (error) {
     console.error('Error submitting offline booking:', error);

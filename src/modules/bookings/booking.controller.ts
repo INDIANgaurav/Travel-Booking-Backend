@@ -8,9 +8,11 @@ import { bookFlight } from '../flights/nexusdmc.service';
 import { bookFlight as bookFlightGapi, getBookingDetails as getBookingDetailsGapi } from '../flights/gapi.service';
 import SeriesFare from '../seriesFare/seriesFare.model';
 import mongoose from 'mongoose';
-import { getIo } from '../../config/socket';
 import User from '../users/user.model';
 import Transaction from '../wallet/wallet.model';
+import { createAdminNotification } from '../notifications/notification.controller';
+import { sendBookingConfirmationEmail, sendCancellationEmail } from '../../utils/email.service';
+import { getIo } from '../../config/socket';
 
 export const getMyBookings = async (req: AuthRequest, res: Response) => {
   try {
@@ -433,6 +435,16 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
         });
       }
 
+      try {
+        await sendBookingConfirmationEmail(
+          req.user.email,
+          req.user.name || 'Agent',
+          newBooking
+        );
+      } catch (e) {
+        console.error('Failed to send booking email:', e);
+      }
+
       return res.status(201).json({
         booking: newBooking,
         message: 'Booking confirmed using wallet balance'
@@ -753,6 +765,15 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
       if (apiBookingFailed) {
         res.status(200).json({ message: 'Payment successful but ticketing failed. Full refund has been initiated.', booking, apiFailed: true });
       } else {
+        try {
+          await sendBookingConfirmationEmail(
+            req.user.email,
+            req.user.name || 'Agent',
+            booking
+          );
+        } catch (e) {
+          console.error('Failed to send booking email:', e);
+        }
         res.status(200).json({ message: 'Payment verified successfully', booking });
       }
     } else {
@@ -877,8 +898,30 @@ export const cancelBooking = async (req: AuthRequest, res: Response) => {
     
     let razorpayRefundId: string | undefined;
 
-    // Trigger Razorpay Refund if payment was made via Razorpay and refund > 0
-    if (booking.razorpayPaymentId && refundAmount > 0) {
+    // Trigger Refund based on payment method
+    if (booking.paymentMethod === 'WALLET' && refundAmount > 0) {
+      // Refund to wallet
+      const user = await User.findById(req.user._id);
+      if (user) {
+        user.walletBalance = (user.walletBalance || 0) + refundAmount;
+        await user.save();
+        
+        // Create wallet transaction
+        const transaction = new Transaction({
+          user: user._id,
+          type: 'CREDIT',
+          amount: refundAmount,
+          description: `Refund for cancelled booking ${booking.bookingId}`,
+          paymentMethod: 'WALLET',
+          referenceNo: booking.bookingId,
+          pnr: booking.details?.pnr || '',
+          productName: booking.type,
+          netAmountDebited: refundAmount
+        });
+        await transaction.save();
+        booking.refundStatus = 'COMPLETED';
+      }
+    } else if (booking.razorpayPaymentId && refundAmount > 0) {
       try {
         const razorpay = new Razorpay({
           key_id: process.env.RAZORPAY_KEY_ID || '',
@@ -897,12 +940,41 @@ export const cancelBooking = async (req: AuthRequest, res: Response) => {
       } catch (refundError) {
         console.error('Razorpay refund failed:', refundError);
         booking.refundStatus = 'FAILED';
+        
+        await createAdminNotification(
+          'Refund Failed',
+          `Razorpay refund failed for booking ${booking.bookingId}. Manual intervention required.`,
+          'REFUND_PENDING',
+          '/admin/treasury/queue'
+        );
       }
     } else if (refundAmount === 0) {
       booking.refundStatus = 'NONE';
     }
 
     await booking.save();
+
+    // Send Cancellation Email
+    try {
+      const pnr = booking.details?.pnr || booking.bookingId;
+      await sendCancellationEmail(
+        req.user.email,
+        req.user.name,
+        pnr,
+        refundAmount
+      );
+    } catch (emailError) {
+      console.error('Failed to send cancellation email:', emailError);
+    }
+
+    await booking.save();
+
+    await createAdminNotification(
+      'Booking Cancelled',
+      `Booking ${booking.bookingId} was cancelled by ${req.user.name}.`,
+      'BOOKING_CANCELLED',
+      '/admin/bookings'
+    );
 
     // Create Refund Record
     const refund = new Refund({

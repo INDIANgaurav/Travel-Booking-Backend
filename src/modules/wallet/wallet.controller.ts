@@ -5,7 +5,9 @@ import Transaction from './wallet.model';
 import { OfflineTopUpRequest } from './offlineTopUp.model';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import { createAdminNotification } from '../notifications/notification.controller';
 import { WithdrawalRequest } from './withdrawalRequest.model';
+import { sendWalletTopupEmail } from '../../utils/email.service';
 
 // @desc    Get user wallet and transactions
 // @route   GET /api/wallet
@@ -186,6 +188,14 @@ export const submitOfflineTopUp = async (req: AuthRequest, res: Response) => {
     });
 
     await request.save();
+
+    await createAdminNotification(
+      'Wallet Recharge Request',
+      `${req.user.name} requested an offline top-up of ₹${amount}.`,
+      'SYSTEM',
+      '/admin/offline-topups'
+    );
+
     res.status(201).json({ message: 'Top-up request submitted successfully', request });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -260,6 +270,18 @@ export const approveOfflineTopUp = async (req: AuthRequest, res: Response) => {
     request.processedAt = new Date();
     await request.save();
 
+    try {
+      await sendWalletTopupEmail(
+        agent.email,
+        agent.name || 'Agent',
+        request.amount,
+        agent.walletBalance,
+        request.referenceNumber || request.chequeNumber || 'N/A'
+      );
+    } catch (e) {
+      console.error('Failed to send topup email:', e);
+    }
+
     res.json({ message: 'Request approved and wallet credited', request });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -319,6 +341,13 @@ export const submitWithdrawalRequest = async (req: AuthRequest, res: Response) =
       description: `Withdrawal Request Submitted (Pending Approval)`,
       paymentMethod: 'BANK_TRANSFER'
     });
+
+    await createAdminNotification(
+      'Withdrawal Request',
+      `${req.user.name} requested a withdrawal of ₹${amount}.`,
+      'SYSTEM',
+      '/admin/withdrawals'
+    );
 
     res.status(201).json(request);
   } catch (error: any) {

@@ -1,5 +1,9 @@
 import { Request, Response } from 'express';
 import User from './user.model';
+import Booking from '../bookings/booking.model';
+import Transaction from '../wallet/wallet.model';
+import { sendAccountApprovedEmail } from '../../utils/email.service';
+import multer from 'multer';
 
 export const getUsers = async (req: Request, res: Response) => {
   try {
@@ -106,8 +110,6 @@ export const getDashboardStats = async (req: Request, res: Response) => {
   }
 };
 
-import Booking from '../bookings/booking.model';
-
 export const getAllBookings = async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
@@ -153,6 +155,14 @@ export const approveAgent = async (req: Request, res: Response) => {
     agent.agentStatus = status;
     agent.isApproved = status === 'APPROVED';
     await agent.save();
+
+    if (status === 'APPROVED') {
+      try {
+        await sendAccountApprovedEmail(agent.email, agent.name || 'Agent');
+      } catch (e) {
+        console.error('Failed to send account approval email:', e);
+      }
+    }
 
     res.json({ message: `Agent ${status.toLowerCase()} successfully`, agent });
   } catch (error: any) {
