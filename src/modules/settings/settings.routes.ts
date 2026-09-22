@@ -5,13 +5,15 @@ import {
   getRoles, createRole, updateRole, deleteRole,
   getPGMappings, createPGMapping, deletePGMapping,
   getDynamicPages, getDynamicPageByName, saveDynamicPage,
-  getB2BAgents
+  getB2BAgents,
+  getGeneralSettings, saveGeneralSettings
 } from './settings.controller';
 
 const router = Router();
 
 // Public routes for CMS content
 router.get('/pages/:name', getDynamicPageByName);
+router.get('/general', getGeneralSettings);
 
 // Admin Only Routes
 router.use(protect);
@@ -39,5 +41,8 @@ router.post('/pages', saveDynamicPage);
 
 // Helpers
 router.get('/agents', getB2BAgents);
+
+// General Settings
+router.post('/general', saveGeneralSettings);
 
 export default router;

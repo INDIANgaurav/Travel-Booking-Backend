@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { ServiceProvider, RoleMaster, PGMapping, DynamicPage } from './settings.model';
+import { ServiceProvider, RoleMaster, PGMapping, DynamicPage, GeneralSettings } from './settings.model';
 import User from '../users/user.model';
 
 // --- SERVICE PROVIDERS ---
@@ -155,5 +155,33 @@ export const getB2BAgents = async (req: Request, res: Response) => {
     res.json({ success: true, data: agents });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// --- GENERAL SETTINGS ---
+export const getGeneralSettings = async (req: Request, res: Response) => {
+  try {
+    let settings = await GeneralSettings.findOne();
+    if (!settings) {
+      settings = await GeneralSettings.create({ bookingSessionTimerMinutes: 10 });
+    }
+    res.json({ success: true, data: settings });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const saveGeneralSettings = async (req: Request, res: Response) => {
+  try {
+    let settings = await GeneralSettings.findOne();
+    if (settings) {
+      settings.bookingSessionTimerMinutes = req.body.bookingSessionTimerMinutes || 10;
+      await settings.save();
+    } else {
+      settings = await GeneralSettings.create(req.body);
+    }
+    res.json({ success: true, data: settings });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
   }
 };

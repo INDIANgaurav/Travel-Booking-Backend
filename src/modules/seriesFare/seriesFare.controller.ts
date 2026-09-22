@@ -24,6 +24,7 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       availableSeats,
       realtimeBook,
       status,
+      segments,
     } = req.body;
 
     // Generate a unique ID using timestamp and random number to avoid duplicate key errors
@@ -51,6 +52,7 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       availableSeats: Number(availableSeats !== undefined ? availableSeats : totalSeats || 10),
       realtimeBook: realtimeBook !== undefined ? realtimeBook : true,
       status: status || 'Active',
+      segments: segments || [],
     });
 
     res.status(201).json(seriesFare);

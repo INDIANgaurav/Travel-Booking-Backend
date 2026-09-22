@@ -80,3 +80,14 @@ export const ServiceProvider = mongoose.model<IServiceProvider>('ServiceProvider
 export const RoleMaster = mongoose.model<IRoleMaster>('RoleMaster', roleMasterSchema);
 export const PGMapping = mongoose.model<IPGMapping>('PGMapping', pgMappingSchema);
 export const DynamicPage = mongoose.model<IDynamicPage>('DynamicPage', dynamicPageSchema);
+
+// 5. General Settings
+export interface IGeneralSettings extends Document {
+  bookingSessionTimerMinutes: number;
+}
+
+const generalSettingsSchema = new Schema<IGeneralSettings>({
+  bookingSessionTimerMinutes: { type: Number, default: 10 }
+}, { timestamps: true });
+
+export const GeneralSettings = mongoose.model<IGeneralSettings>('GeneralSettings', generalSettingsSchema);

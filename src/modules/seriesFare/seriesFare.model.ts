@@ -1,5 +1,16 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface ISeriesFareSegment {
+  origin: string;
+  destination: string;
+  airline: string;
+  flightNo: string;
+  departureTime: string;
+  arrivalTime: string;
+  departureTerminal?: string;
+  arrivalTerminal?: string;
+}
+
 export interface ISeriesFare extends Document {
   supplierId?: mongoose.Types.ObjectId;
   supplierName?: string;
@@ -25,6 +36,7 @@ export interface ISeriesFare extends Document {
   status: 'Active' | 'Inactive' | 'SoldOut' | 'Expired';
   isArchived: boolean;
   connectionId?: string;
+  segments?: ISeriesFareSegment[];
   checkinBaggage?: string;
   cabinBaggage?: string;
   mealsIncluded?: boolean;
@@ -59,6 +71,16 @@ const seriesFareSchema = new Schema<ISeriesFare>(
     realtimeBook: { type: Boolean, default: true },
     status: { type: String, enum: ['Active', 'Inactive', 'SoldOut', 'Expired'], default: 'Active' },
     isArchived: { type: Boolean, default: false },
+    segments: [{
+      origin: String,
+      destination: String,
+      airline: String,
+      flightNo: String,
+      departureTime: String,
+      arrivalTime: String,
+      departureTerminal: String,
+      arrivalTerminal: String
+    }],
     checkinBaggage: { type: String, default: '15 KG' },
     cabinBaggage: { type: String, default: '7 KG' },
     mealsIncluded: { type: Boolean, default: false },
