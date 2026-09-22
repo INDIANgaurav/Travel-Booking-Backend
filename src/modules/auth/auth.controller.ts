@@ -7,9 +7,40 @@ import { sendOTP, sendWelcomeEmail } from '../../utils/email.service';
 import { getIo } from '../../config/socket';
 import { createAdminNotification } from '../notifications/notification.controller';
 
-const generateToken = (id: string) => {
+const generateAccessToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
-    expiresIn: '30d',
+    expiresIn: '15m',
+  });
+};
+
+const generateRefreshToken = (id: string) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET as string, {
+    expiresIn: '7d',
+  });
+};
+
+const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
+  const accessToken = generateAccessToken(user.id);
+  const refreshToken = generateRefreshToken(user.id);
+
+  res.cookie('jwt', refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+
+  res.status(statusCode).json({
+    _id: user.id,
+    name: user.name,
+    email: user.email,
+    roles: user.roles,
+    department: user.department,
+    companyName: user.companyName,
+    supplierOwnerId: user.supplierOwnerId,
+    agentStatus: user.agentStatus,
+    avatar: user.avatar,
+    token: accessToken,
   });
 };
 
@@ -204,17 +235,7 @@ export const loginUser = async (req: Request, res: Response) => {
         });
       }
 
-      res.json({
-        _id: user.id,
-        name: user.name,
-        email: user.email,
-        roles: user.roles,
-        department: user.department,
-        companyName: user.companyName,
-        supplierOwnerId: user.supplierOwnerId,
-        avatar: user.avatar,
-        token: generateToken(user.id),
-      });
+      sendTokenResponse(user, 200, res);
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
     }
@@ -289,16 +310,7 @@ export const googleAuth = async (req: Request, res: Response) => {
     }
 
     // Generate JWT
-    res.status(200).json({
-      _id: user.id,
-      name: user.name,
-      email: user.email,
-      roles: user.roles,
-      department: user.department,
-      agentStatus: user.agentStatus,
-      avatar: user.avatar,
-      token: generateToken(user.id),
-    });
+    sendTokenResponse(user, 200, res);
 
   } catch (error: any) {
     console.error('Google Auth Error:', error);
@@ -313,6 +325,21 @@ export const forgotPassword = async (req: Request, res: Response) => {
     const user = await User.findOne({ email: req.body.email });
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
+    }
+
+    const { portal } = req.body;
+    if (portal === 'supplier') {
+      if (!user.roles.includes('SUPPLIER_AGENT') && !user.roles.includes('SUPPLIER_STAFF')) {
+        return res.status(403).json({ message: 'Email not registered as a Supplier.' });
+      }
+    } else if (portal === 'b2b') {
+      if (!user.roles.includes('B2B_AGENT') && !user.roles.includes('SELLER')) {
+        return res.status(403).json({ message: 'Email not registered as a B2B Agent.' });
+      }
+    } else if (portal === 'admin') {
+      if (!user.roles.includes('SUPER_ADMIN') && !user.roles.includes('SUB_ADMIN')) {
+        return res.status(403).json({ message: 'Unauthorized access.' });
+      }
     }
 
     const config = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
@@ -406,18 +433,47 @@ export const verifyRegistration = async (req: Request, res: Response) => {
       console.error('Failed to send welcome email:', e);
     }
 
-    res.json({
-      _id: user.id,
-      name: user.name,
-      email: user.email,
-      roles: user.roles,
-      department: user.department,
-      companyName: user.companyName,
-      supplierOwnerId: user.supplierOwnerId,
-      avatar: user.avatar,
-      token: generateToken(user.id),
-    });
+    sendTokenResponse(user, 200, res);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
+};
+export const refreshAccessToken = async (req: Request, res: Response) => {
+  try {
+    const refreshToken = req.cookies?.jwt;
+    
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'Not authorized, no refresh token' });
+    }
+
+    try {
+      const decoded: any = jwt.verify(refreshToken, process.env.JWT_SECRET as string);
+      const user = await User.findById(decoded.id);
+
+      if (!user) {
+        return res.status(401).json({ message: 'User not found' });
+      }
+
+      if (!user.isActive) {
+        return res.status(401).json({ message: 'Account deactivated' });
+      }
+
+      const accessToken = generateAccessToken(user.id);
+      res.json({ token: accessToken });
+    } catch (err) {
+      return res.status(401).json({ message: 'Not authorized, refresh token failed' });
+    }
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const logoutUser = (req: Request, res: Response) => {
+  res.cookie('jwt', '', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    expires: new Date(0),
+  });
+  res.status(200).json({ message: 'Logged out successfully' });
 };

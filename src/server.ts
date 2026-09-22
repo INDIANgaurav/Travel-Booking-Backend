@@ -4,6 +4,7 @@ import { initSocket } from './config/socket';
 import dotenv from 'dotenv';
 dotenv.config();
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import connectDB from './config/db';
@@ -56,6 +57,7 @@ initSocket(server);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(cookieParser());
 
 // Security Middlewares
 app.use(helmet({ crossOriginResourcePolicy: false }));
