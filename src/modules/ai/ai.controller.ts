@@ -9,7 +9,8 @@ CURRENT DATE: ${new Date().toDateString()} - NEVER pick a date in the past. If t
 
 Your capabilities:
 - Help users find real flights using the search_flights tool.
-- Provide travel recommendations, tips, and destination info.
+- If the user explicitly agrees or asks to book a specific flight you presented, use the book_flight tool to initiate the booking process. Always share the returned checkout URL as a beautiful markdown link (e.g. [Click here to complete your booking](URL)).
+- Provide travel recommendations, tips, and destination info. You can suggest the best and cheapest trips online when they ask for trip plans based on your knowledge!
 - Assist with booking-related queries (cancellations, refunds, status).
 - Share visa and passport information.
 - Suggest deals and offers.
@@ -57,6 +58,21 @@ const searchFlightsFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
+const bookFlightFunctionDeclaration: FunctionDeclaration = {
+  name: "book_flight",
+  description: "Initiates the booking process when the user explicitly says they want to book a specific flight you showed them.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      flightNumber: { type: SchemaType.STRING, description: "The flight number, e.g., QP-1120" },
+      date: { type: SchemaType.STRING, description: "The date of the flight in YYYY-MM-DD format" },
+      departureAirportCode: { type: SchemaType.STRING, description: "Origin airport code" },
+      arrivalAirportCode: { type: SchemaType.STRING, description: "Destination airport code" }
+    },
+    required: ["flightNumber", "date", "departureAirportCode", "arrivalAirportCode"]
+  }
+};
+
 export const chatWithAI = async (req: Request, res: Response) => {
   try {
     const { message, sessionId } = req.body;
@@ -74,40 +90,40 @@ export const chatWithAI = async (req: Request, res: Response) => {
     const history = conversationHistories.get(sid)!;
 
     const FALLBACK_MODELS = [
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
       'gemini-3.6-flash',
       'gemini-3.5-flash',
-      'gemini-3-flash',
-      'gemini-2.5-flash',
-      'gemini-2-flash'
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest'
     ];
 
-    let chat;
-    let result;
-    let model;
-    
-    for (const modelName of FALLBACK_MODELS) {
-      try {
-        model = genAI.getGenerativeModel({ 
-          model: modelName,
-          systemInstruction: SYSTEM_PROMPT,
-          tools: [{ functionDeclarations: [searchFlightsFunctionDeclaration] }]
-        });
-
-        chat = model.startChat({
-          history: history,
-        });
-
-        result = await chat.sendMessage(message);
-        console.log(`[AI] Successfully responded using model: ${modelName}`);
-        break; 
-      } catch (err: any) {
-        console.log(`[AI] Model ${modelName} failed (likely rate limit). Trying next...`);
+    const generateWithFallback = async (contents: any[]) => {
+      for (const modelName of FALLBACK_MODELS) {
+        try {
+          const model = genAI.getGenerativeModel({ 
+            model: modelName,
+            systemInstruction: SYSTEM_PROMPT,
+            tools: [
+              { functionDeclarations: [searchFlightsFunctionDeclaration, bookFlightFunctionDeclaration] }
+            ]
+          });
+          const result = await model.generateContent({ contents });
+          console.log(`[AI] Successfully responded using model: ${modelName}`);
+          return result;
+        } catch (err: any) {
+          console.error(`[AI] Model ${modelName} failed:`, err.message);
+        }
       }
-    }
-
-    if (!result || !chat || !model) {
       throw new Error('All fallback models exhausted or failed due to rate limits.');
-    }
+    };
+
+    const currentContents = [
+      ...history,
+      { role: "user", parts: [{ text: message }] }
+    ];
+
+    const result = await generateWithFallback(currentContents);
     let response = result.response;
     
     // Check if the model wants to call a function
@@ -163,9 +179,15 @@ export const chatWithAI = async (req: Request, res: Response) => {
           }
 
           console.log(`[AI] Sending Function Response to chat model...`);
-          const currentHistory = await chat.getHistory();
+          
+          const functionCallResponseMsg = {
+            role: "model",
+            parts: [{ functionCall: call }]
+          };
+
           const newContents = [
-            ...currentHistory,
+            ...currentContents,
+            functionCallResponseMsg,
             {
               role: "user",
               parts: [
@@ -182,7 +204,7 @@ export const chatWithAI = async (req: Request, res: Response) => {
             }
           ];
 
-          const nextResult = await model.generateContent({ contents: newContents });
+          const nextResult = await generateWithFallback(newContents);
           response = nextResult.response;
           botReply = response.text();
           console.log(`[AI] botReply generated (length: ${botReply.length}):`, botReply);
@@ -196,9 +218,14 @@ export const chatWithAI = async (req: Request, res: Response) => {
 
         } catch (dbError) {
           console.error('[AI DB Error]', dbError);
-          const currentHistory = await chat.getHistory();
+          const functionCallResponseMsg = {
+            role: "model",
+            parts: [{ functionCall: call }]
+          };
+          
           const newContents = [
-            ...currentHistory,
+            ...currentContents,
+            functionCallResponseMsg,
             {
               role: "user",
               parts: [
@@ -214,7 +241,7 @@ export const chatWithAI = async (req: Request, res: Response) => {
               ]
             }
           ];
-          const nextResult = await model.generateContent({ contents: newContents });
+          const nextResult = await generateWithFallback(newContents);
           response = nextResult.response;
           botReply = response.text();
           console.log(`[AI] Error botReply generated:`, botReply);
@@ -226,12 +253,55 @@ export const chatWithAI = async (req: Request, res: Response) => {
           conversationHistories.set(sid, finalHistory.slice(-40));
           return res.json({ reply: botReply, sessionId: sid });
         }
+      } else if (call.name === 'book_flight') {
+        const args = call.args as { flightNumber: string, date: string, departureAirportCode: string, arrivalAirportCode: string };
+        const checkoutUrl = `/flights/booking?flight=${args.flightNumber}&date=${args.date}&from=${args.departureAirportCode}&to=${args.arrivalAirportCode}`;
+        
+        console.log(`[AI Function Call] Booking initiated for ${args.flightNumber}`);
+        
+        const functionCallResponseMsg = {
+          role: "model",
+          parts: [{ functionCall: call }]
+        };
+        
+        const newContents = [
+          ...currentContents,
+          functionCallResponseMsg,
+          {
+            role: "user",
+            parts: [
+              {
+                functionResponse: {
+                  name: 'book_flight',
+                  response: { success: true, checkoutUrl: checkoutUrl }
+                }
+              },
+              {
+                text: "The booking link has been generated. Provide the link to the user and ask them to click it to complete their booking. Output ONLY the final response."
+              }
+            ]
+          }
+        ];
+        
+        const nextResult = await generateWithFallback(newContents);
+        response = nextResult.response;
+        botReply = response.text();
+        console.log(`[AI] Booking botReply generated:`, botReply);
+
+        const finalHistory = [
+          ...newContents,
+          { role: "model", parts: [{ text: botReply }] }
+        ];
+        conversationHistories.set(sid, finalHistory.slice(-40));
+        return res.json({ reply: botReply, sessionId: sid });
       }
     }
 
     // Keep history manageable (last 20 exchanges)
-    // To properly maintain history with function calls, we just pull the chat history from the SDK
-    const updatedHistory = await chat.getHistory();
+    const updatedHistory = [
+      ...currentContents,
+      { role: "model", parts: [{ text: botReply }] }
+    ];
     conversationHistories.set(sid, updatedHistory.slice(-40));
 
     res.json({ reply: botReply, sessionId: sid });
