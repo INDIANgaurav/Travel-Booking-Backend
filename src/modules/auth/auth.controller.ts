@@ -25,8 +25,8 @@ const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
 
   res.cookie('jwt', refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true, // MUST be true for sameSite 'none'
+    sameSite: 'none', // Needed for cross-domain requests (Vercel -> Render)
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 
@@ -471,8 +471,8 @@ export const refreshAccessToken = async (req: Request, res: Response) => {
 export const logoutUser = (req: Request, res: Response) => {
   res.cookie('jwt', '', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     expires: new Date(0),
   });
   res.status(200).json({ message: 'Logged out successfully' });
