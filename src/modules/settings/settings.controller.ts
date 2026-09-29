@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { ServiceProvider, RoleMaster, PGMapping, DynamicPage, GeneralSettings } from './settings.model';
+import { ServiceProvider, RoleMaster, PGMapping, DynamicPage, GeneralSettings, Announcement } from './settings.model';
 import User from '../users/user.model';
 
 // --- SERVICE PROVIDERS ---
@@ -181,6 +181,59 @@ export const saveGeneralSettings = async (req: Request, res: Response) => {
       settings = await GeneralSettings.create(req.body);
     }
     res.json({ success: true, data: settings });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// --- ANNOUNCEMENTS ---
+export const getAnnouncements = async (req: Request, res: Response) => {
+  try {
+    const announcements = await Announcement.find().sort('-createdAt');
+    res.json({ success: true, data: announcements });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getActiveAnnouncements = async (req: Request, res: Response) => {
+  try {
+    const now = new Date();
+    const announcements = await Announcement.find({ 
+      isActive: true,
+      $and: [
+        { $or: [{ validFrom: { $exists: false } }, { validFrom: null }, { validFrom: { $lte: now } }] },
+        { $or: [{ validUntil: { $exists: false } }, { validUntil: null }, { validUntil: { $gte: now } }] }
+      ]
+    }).sort('-createdAt');
+    res.json({ success: true, data: announcements });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const createAnnouncement = async (req: Request, res: Response) => {
+  try {
+    const announcement = await Announcement.create(req.body);
+    res.status(201).json({ success: true, data: announcement });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+export const updateAnnouncement = async (req: Request, res: Response) => {
+  try {
+    const announcement = await Announcement.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ success: true, data: announcement });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+export const deleteAnnouncement = async (req: Request, res: Response) => {
+  try {
+    await Announcement.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: 'Announcement deleted successfully' });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message });
   }

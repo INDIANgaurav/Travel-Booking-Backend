@@ -6,7 +6,8 @@ import {
   getPGMappings, createPGMapping, deletePGMapping,
   getDynamicPages, getDynamicPageByName, saveDynamicPage,
   getB2BAgents,
-  getGeneralSettings, saveGeneralSettings
+  getGeneralSettings, saveGeneralSettings,
+  getAnnouncements, getActiveAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement
 } from './settings.controller';
 
 const router = Router();
@@ -14,6 +15,7 @@ const router = Router();
 // Public routes for CMS content
 router.get('/pages/:name', getDynamicPageByName);
 router.get('/general', getGeneralSettings);
+router.get('/announcements/active', getActiveAnnouncements); // Public/Agent route to fetch active announcements
 
 // Admin Only Routes
 router.use(protect);
@@ -44,5 +46,11 @@ router.get('/agents', getB2BAgents);
 
 // General Settings
 router.post('/general', saveGeneralSettings);
+
+// Announcements
+router.get('/announcements', getAnnouncements);
+router.post('/announcements', createAnnouncement);
+router.put('/announcements/:id', updateAnnouncement);
+router.delete('/announcements/:id', deleteAnnouncement);
 
 export default router;

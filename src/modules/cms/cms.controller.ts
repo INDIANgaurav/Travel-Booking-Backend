@@ -39,7 +39,7 @@ export const getGlobeStats = async (req: Request, res: Response) => {
     ).lean();
 
     if (!bookings || bookings.length === 0) {
-      return res.json(FALLBACK_MARKERS);
+      return res.json([]);
     }
 
     // Aggregate by destination
@@ -58,8 +58,8 @@ export const getGlobeStats = async (req: Request, res: Response) => {
       })
       .filter(Boolean);
 
-    // If none matched coordinates, return fallback
-    if (markers.length === 0) return res.json(FALLBACK_MARKERS);
+    // If none matched coordinates, return empty array
+    if (markers.length === 0) return res.json([]);
 
     res.json(markers);
   } catch (error: any) {

@@ -91,3 +91,26 @@ const generalSettingsSchema = new Schema<IGeneralSettings>({
 }, { timestamps: true });
 
 export const GeneralSettings = mongoose.model<IGeneralSettings>('GeneralSettings', generalSettingsSchema);
+
+// 6. Announcements (Broadcasts)
+export interface IAnnouncement extends Document {
+  title: string;
+  message: string;
+  type: 'INFO' | 'WARNING' | 'SUCCESS' | 'ERROR';
+  isActive: boolean;
+  targetAudience: string[];
+  validFrom?: Date;
+  validUntil?: Date;
+}
+
+const announcementSchema = new Schema<IAnnouncement>({
+  title: { type: String, required: true },
+  message: { type: String, required: true },
+  type: { type: String, enum: ['INFO', 'WARNING', 'SUCCESS', 'ERROR'], default: 'INFO' },
+  isActive: { type: Boolean, default: true },
+  targetAudience: [{ type: String, enum: ['ALL', 'B2B', 'B2C', 'SUPPLIER', 'SUB_ADMIN'], default: 'ALL' }],
+  validFrom: { type: Date },
+  validUntil: { type: Date }
+}, { timestamps: true });
+
+export const Announcement = mongoose.model<IAnnouncement>('Announcement', announcementSchema);
