@@ -1067,3 +1067,41 @@ export const getFlightCities = async (req: Request, res: Response) => {
   }
 };
 
+// @desc    Get top flight routes based on active Series Fares
+// @route   GET /api/searches/flights/top-routes
+// @access  Public
+export const getTopFlightRoutes = async (req: Request, res: Response) => {
+  try {
+    const topRoutes = await SeriesFare.aggregate([
+      { 
+        $match: { 
+          status: 'Active', 
+          isArchived: false, 
+          travelDate: { $gte: new Date() } 
+        } 
+      },
+      {
+        $group: {
+          _id: { origin: '$origin', destination: '$destination' },
+          count: { $sum: 1 },
+          minFare: { $min: '$adtFare' }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          codeFrom: '$_id.origin',
+          codeTo: '$_id.destination',
+          count: 1,
+          startingPrice: '$minFare'
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 9 }
+    ]);
+
+    res.json(topRoutes);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+};
