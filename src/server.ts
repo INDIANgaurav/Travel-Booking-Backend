@@ -44,6 +44,8 @@ import cancellationRoutes from './modules/bookings/cancellation.routes';
 import ticketRoutes from './modules/tickets/ticket.routes';
 import groupBookingRoutes from './modules/bookings/groupBooking.routes';
 import notificationRoutes from './modules/notifications/notification.routes';
+import b2bApiRoutes from './modules/b2bApi/b2bApi.routes';
+import b2bAdminRoutes from './modules/b2bApi/b2bAdmin.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
@@ -77,6 +79,7 @@ app.use('/api/', apiLimiter);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin/notifications', notificationRoutes);
+app.use('/api/admin/b2b-clients', b2bAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/agents', agentRoutes);
@@ -108,6 +111,7 @@ app.use('/api/commissions', commissionRoutes);
 app.use('/api/promos', promoRoutes);
 app.use('/api/cancellations', cancellationRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/v1/b2b', b2bApiRoutes);
 
 // Global Error Handler to catch [object Object] issues
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
