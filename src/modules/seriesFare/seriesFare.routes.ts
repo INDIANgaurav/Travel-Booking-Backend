@@ -48,6 +48,7 @@ router.get('/booking-history', protect, getSupplierBookingHistory);
 router.get('/queue', protect, getSeriesFareQueue);
 router.put('/queue/:id/status', protect, updateSeriesFareQueueStatus);
 
+router.get('/report/manifest', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), getFDManifest);
 router.get('/report/manifest/:id', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), getFDManifest);
 router.get('/report/slow-moving', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), getSlowMovingSectors);
 router.get('/archive', protect, authorizeRoles('SUPER_ADMIN', 'SUPPLIER_AGENT', 'SUPPLIER_STAFF'), getArchivedFares);

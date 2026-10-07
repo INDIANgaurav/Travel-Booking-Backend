@@ -538,20 +538,64 @@ export const bulkUploadSeriesFares = async (req: AuthRequest, res: Response) => 
 
 export const getFDManifest = async (req: AuthRequest, res: Response) => {
   try {
-    const { id } = req.params;
-    const seriesFare = await SeriesFare.findOne({ $or: [{ sfId: id }, { airlinePnr: id }] });
-    if (!seriesFare) return res.status(404).json({ message: 'Fixed Departure not found' });
+    const id = req.params.id;
+    const queryId = req.query.id as string;
+    const fromDate = req.query.fromDate as string;
+    const toDate = req.query.toDate as string;
+    const airline = req.query.airline as string;
+    
+    const searchId = (id && id !== 'all') ? id : (queryId || '');
+
+    let query: any = {};
+    if (searchId) {
+      query.$or = [{ sfId: searchId }, { airlinePnr: searchId }];
+    } else {
+      if (fromDate || toDate) {
+        query.travelDate = {};
+        if (fromDate) query.travelDate.$gte = new Date(fromDate);
+        if (toDate) query.travelDate.$lte = new Date(toDate);
+      }
+      if (airline) {
+        query.airline = airline;
+      }
+    }
+
+    const seriesFares = await SeriesFare.find(query).lean();
+    if (!seriesFares.length) return res.status(404).json({ message: 'No Fixed Departures found for given criteria' });
 
     const Booking = require('../bookings/booking.model').default;
-    const sfObjectIdStr = seriesFare._id.toString();
-    const searchKey = 'SF_' + seriesFare.sfId;
+    
+    let allKeys: string[] = [];
+    let sfMap: Record<string, string> = {};
+    
+    seriesFares.forEach(sf => {
+      const sfObjectIdStr = sf._id.toString();
+      const tDate = sf.travelDate ? new Date(sf.travelDate).toISOString().split('T')[0] : '';
+      
+      allKeys.push(`SF_${sfObjectIdStr}`, sfObjectIdStr, `SF_${sf.sfId}`, sf.sfId);
+      sfMap[`SF_${sfObjectIdStr}`] = tDate;
+      sfMap[sfObjectIdStr] = tDate;
+      sfMap[`SF_${sf.sfId}`] = tDate;
+      sfMap[sf.sfId] = tDate;
+    });
+
     const bookings = await Booking.find({
       status: { $in: ['CONFIRMED', 'TICKETING_IN_PROGRESS', 'PENDING', 'ACTIVE'] },
-      'details.flight_keys': { $in: [`SF_${sfObjectIdStr}`, sfObjectIdStr, searchKey, seriesFare.sfId] }
-    });
+      'details.flight_keys': { $in: allKeys }
+    }).lean();
 
     let manifest: any[] = [];
     bookings.forEach((booking: any) => {
+      let matchedTravelDate = '';
+      if (booking.details && booking.details.flight_keys) {
+        for (let key of booking.details.flight_keys) {
+          if (sfMap[key]) {
+            matchedTravelDate = sfMap[key];
+            break;
+          }
+        }
+      }
+
       if (booking.details && booking.details.passengers) {
         booking.details.passengers.forEach((pax: any) => {
           manifest.push({
@@ -567,19 +611,26 @@ export const getFDManifest = async (req: AuthRequest, res: Response) => {
             passportNo: pax.passportNum || '',
             passportExpiry: pax.passportExpiry || '',
             passportIssuance: '',
-            remarks: booking.bookingId
+            remarks: booking.bookingId,
+            travelDate: matchedTravelDate || booking.date || '',
+            bookingDate: booking.createdAt ? new Date(booking.createdAt).toISOString().split('T')[0] : ''
           });
         });
       }
     });
 
+    let summary = null;
+    if (seriesFares.length === 1 && searchId) {
+      summary = {
+        flight: seriesFares[0].airline + ' - ' + seriesFares[0].flightNo,
+        sector: seriesFares[0].origin + '-' + seriesFares[0].destination,
+        travelDate: seriesFares[0].travelDate,
+        pnr: seriesFares[0].airlinePnr
+      };
+    }
+
     res.json({
-      seriesFare: {
-        flight: seriesFare.airline + ' - ' + seriesFare.flightNo,
-        sector: seriesFare.origin + '-' + seriesFare.destination,
-        travelDate: seriesFare.travelDate,
-        pnr: seriesFare.airlinePnr
-      },
+      seriesFare: summary,
       manifest
     });
   } catch (error: any) {

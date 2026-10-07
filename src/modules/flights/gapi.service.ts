@@ -113,6 +113,21 @@ export const authenticate = async (): Promise<string> => {
 };
 
 /**
+ * 1.5 Get Flight Sectors
+ */
+export const getSectors = async () => {
+  const client = await getGapiClient();
+  
+  try {
+    const response = await client.get('/search/sectors');
+    return response.data;
+  } catch (error: any) {
+    console.error('GAPI getSectors error:', error?.response?.data || error.message);
+    throw error;
+  }
+};
+
+/**
  * 2. Search Flights
  * @param searchRequest Standardized search request 
  */
@@ -191,7 +206,29 @@ export const searchFlights = async (searchRequest: any) => {
 };
 
 /**
- * 3. Fare Quote / Rules
+ * 3. Fare Rule
+ */
+export const getFareRule = async (resultSessionId: string) => {
+  const client = await getGapiClient();
+  
+  try {
+    const response = await client.post('/search/fareRule', {
+      resultSessionId: [resultSessionId]
+    });
+
+    if (response.data.responseStatus !== 1) {
+      throw new Error(`GAPI FareRule failed: ${response.data.error?.errorMessage || 'Unknown error'}`);
+    }
+
+    return response.data;
+  } catch (error: any) {
+    console.error('GAPI fareRule error:', error?.response?.data || error.message);
+    throw error;
+  }
+};
+
+/**
+ * 3.5 Fare Quote
  */
 export const fareQuote = async (resultSessionId: string) => {
   const client = await getGapiClient();
