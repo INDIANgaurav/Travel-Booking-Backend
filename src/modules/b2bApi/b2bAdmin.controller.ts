@@ -84,3 +84,19 @@ export const updateB2BClient = async (req: Request, res: Response) => {
     res.status(500).json({ success: false, error: error.message });
   }
 };
+
+export const deleteB2BClient = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const client = await B2BClient.findByIdAndDelete(id);
+
+    if (!client) {
+      return res.status(404).json({ success: false, error: 'B2B Client not found' });
+    }
+
+    res.json({ success: true, message: 'B2B Partner deleted permanently and all API access revoked.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+

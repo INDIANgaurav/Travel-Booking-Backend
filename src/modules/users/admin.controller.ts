@@ -267,31 +267,44 @@ export const createSubAdmin = async (req: Request, res: Response) => {
   }
 };
 
-// @desc    Create a new Agent
-// @route   POST /api/admin/agents
+// @desc    Create a new Agent or Platform User
+// @route   POST /api/admin/agents or POST /api/admin/users
 // @access  Private (Super Admin)
 export const createAgent = async (req: Request, res: Response) => {
   try {
-    const { name, email, phone, password, companyName } = req.body;
+    const { name, firstName, lastName, email, phone, password, companyName, roles, role, address, officeAddress, city } = req.body;
 
     const userExists = await User.findOne({ email });
     if (userExists) {
-      return res.status(400).json({ message: 'User already exists' });
+      return res.status(400).json({ message: 'User with this email already exists' });
     }
 
+    const assignedRoles = roles && Array.isArray(roles) && roles.length > 0 
+      ? roles 
+      : (role ? [role] : ['B2B_AGENT']);
+
+    const fullName = name || `${firstName || ''} ${lastName || ''}`.trim() || email.split('@')[0];
+
     const agent = await User.create({
-      name,
+      name: fullName,
+      firstName: firstName || fullName.split(' ')[0],
+      lastName: lastName || fullName.split(' ').slice(1).join(' '),
       email,
       phone,
       password,
-      roles: ['B2B_AGENT'],
+      roles: assignedRoles,
       companyName,
+      officeAddress: address || officeAddress,
+      city,
       isApproved: true,
+      agentStatus: 'APPROVED',
       isEmailVerified: true,
       isPhoneVerified: true,
+      isActive: true,
     });
 
     res.status(201).json({
+      success: true,
       _id: agent.id,
       name: agent.name,
       email: agent.email,

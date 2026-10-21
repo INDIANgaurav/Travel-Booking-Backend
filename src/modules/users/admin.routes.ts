@@ -35,6 +35,8 @@ router.put('/users/:id', authorizeRoles('SUPER_ADMIN'), updateUser);
 router.delete('/users/:id', authorizeRoles('SUPER_ADMIN'), deleteUser);
 router.post('/subadmins', authorizeRoles('SUPER_ADMIN'), createSubAdmin);
 router.post('/agents', authorizeRoles('SUPER_ADMIN'), createAgent);
+router.post('/users', authorizeRoles('SUPER_ADMIN'), createAgent);
+
 
 // B2B Requests Routes
 const b2bAuth = authorizeRoles('SUPER_ADMIN', 'SUB_ADMIN');
