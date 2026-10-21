@@ -1,32 +1,84 @@
 {
   "info": {
-    "name": "TrippeChalo B2B Flight API Collection",
-    "_postman_id": "tc-b2b-api-v1",
-    "description": "Official TrippeChalo B2B Fixed Departure Flight Distribution API Collection. Includes Search and Book endpoints with sample request payloads.",
+    "name": "TrippeChalo B2B Flight API Collection (Enterprise Standard)",
+    "_postman_id": "tc-b2b-api-v1-standard",
+    "description": "Official TrippeChalo B2B Fixed Departure Flight Distribution API Collection. Includes Step 1: Authentication (Token Acquisition), Step 2: Flight Search, and Step 3: Flight Booking with automatic token chaining.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "https://api.trippechalo.com/api/v1/b2b",
+      "value": "http://localhost:5000/api/v1/b2b",
       "type": "string"
     },
     {
       "key": "apiKey",
-      "value": "YOUR_TEST_OR_LIVE_API_KEY",
+      "value": "test_tc_skyline_demo_key_12345",
+      "type": "string"
+    },
+    {
+      "key": "tokenId",
+      "value": "",
       "type": "string"
     }
   ],
   "item": [
     {
-      "name": "1. Search Flights (Domestic Non-Stop)",
+      "name": "1. Authenticate & Obtain Session Token (POST)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData.success && jsonData.data && jsonData.data.tokenId) {",
+              "    pm.collectionVariables.set('tokenId', jsonData.data.tokenId);",
+              "    console.log('✅ Session Token successfully acquired and saved to {{tokenId}}');",
+              "} else {",
+              "    console.error('❌ Failed to extract tokenId from response');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"apiKey\": \"{{apiKey}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/token",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "token"]
+        },
+        "description": "Authenticates the B2B client and generates a 24-hour valid session tokenId (JWT) for use in all subsequent Flight API calls."
+      }
+    },
+    {
+      "name": "2. Search Flights - Domestic Non-Stop (GET)",
       "request": {
         "method": "GET",
         "header": [
           {
+            "key": "tokenId",
+            "value": "{{tokenId}}",
+            "type": "text",
+            "description": "Session Token from Step 1"
+          },
+          {
             "key": "x-api-key",
             "value": "{{apiKey}}",
-            "type": "text"
+            "type": "text",
+            "description": "Direct API Key fallback"
           }
         ],
         "url": {
@@ -44,10 +96,15 @@
       }
     },
     {
-      "name": "2. Search Flights (International Dubai Non-Stop)",
+      "name": "3. Search Flights - International Dubai Non-Stop (GET)",
       "request": {
         "method": "GET",
         "header": [
+          {
+            "key": "tokenId",
+            "value": "{{tokenId}}",
+            "type": "text"
+          },
           {
             "key": "x-api-key",
             "value": "{{apiKey}}",
@@ -69,10 +126,15 @@
       }
     },
     {
-      "name": "3. Search Flights (Round-Trip Bali with Layover)",
+      "name": "4. Search Flights - Round-Trip Bali via Dubai (GET)",
       "request": {
         "method": "GET",
         "header": [
+          {
+            "key": "tokenId",
+            "value": "{{tokenId}}",
+            "type": "text"
+          },
           {
             "key": "x-api-key",
             "value": "{{apiKey}}",
@@ -94,10 +156,15 @@
       }
     },
     {
-      "name": "4. Book Flight (Test & Live Mode)",
+      "name": "5. Book Flight - Test & Live Mode (POST)",
       "request": {
         "method": "POST",
         "header": [
+          {
+            "key": "tokenId",
+            "value": "{{tokenId}}",
+            "type": "text"
+          },
           {
             "key": "x-api-key",
             "value": "{{apiKey}}",
@@ -111,14 +178,14 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"sfId\": \"SF-TC-C1A-20261210\",\n  \"passengers\": [\n    {\n      \"title\": \"Mr\",\n      \"firstName\": \"Ramesh\",\n      \"lastName\": \"Sharma\",\n      \"type\": \"ADULT\",\n      \"gender\": \"MALE\",\n      \"dob\": \"1988-06-12\"\n    },\n    {\n      \"title\": \"Mrs\",\n      \"firstName\": \"Pooja\",\n      \"lastName\": \"Sharma\",\n      \"type\": \"ADULT\",\n      \"gender\": \"FEMALE\",\n      \"dob\": \"1992-04-20\"\n    }\n  ]\n}"
+          "raw": "{\n  \"sfId\": \"SF-TC-C1A-20261210\",\n  \"passengers\": [\n    {\n      \"title\": \"Mr\",\n      \"firstName\": \"Gaurav\",\n      \"lastName\": \"Sharma\",\n      \"type\": \"ADULT\",\n      \"gender\": \"MALE\",\n      \"dob\": \"1988-06-12\"\n    },\n    {\n      \"title\": \"Mrs\",\n      \"firstName\": \"Pooja\",\n      \"lastName\": \"Sharma\",\n      \"type\": \"ADULT\",\n      \"gender\": \"FEMALE\",\n      \"dob\": \"1992-04-20\"\n    }\n  ]\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/flights/book",
           "host": ["{{baseUrl}}"],
           "path": ["flights", "book"]
         },
-        "description": "Issues flight ticket. In test mode (with test_tc_ key), confirms mock PNR. In live mode (with live_tc_ key), checks API wallet, decrements seat, and confirms PNR."
+        "description": "Issues flight ticket. In test mode (with test_tc_ key/token), confirms instant mock PNR without deducting funds. In live mode (with live_tc_ key/token), validates wallet balance, decrements seats, and issues live PNR."
       }
     }
   ]

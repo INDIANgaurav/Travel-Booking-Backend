@@ -1,5 +1,101 @@
 import { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import SeriesFare from '../seriesFare/seriesFare.model';
+import B2BClient from './b2bClient.model';
+
+export const authenticateB2BClient = async (req: Request, res: Response) => {
+  try {
+    let apiKey = req.body.apiKey || req.header('x-api-key');
+    const { username, password, clientEmail } = req.body;
+
+    if (!apiKey && req.headers.authorization && req.headers.authorization.startsWith('Basic ')) {
+      const base64Credentials = req.headers.authorization.split(' ')[1];
+      const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+      const [u, p] = credentials.split(':');
+      apiKey = p || u;
+    }
+
+    if (!apiKey && password) {
+      apiKey = password;
+    }
+
+    if (!apiKey) {
+      return res.status(400).json({
+        success: false,
+        error: 'Authentication failed. Please provide apiKey, or username/password, or Basic Authorization header.'
+      });
+    }
+
+    const query: any = {
+      $or: [{ testApiKey: apiKey }, { liveApiKey: apiKey }]
+    };
+    if (clientEmail || username) {
+      query.email = (clientEmail || username).toLowerCase().trim();
+    }
+
+    let client = await B2BClient.findOne(query);
+
+    if (!client) {
+      client = await B2BClient.findOne({
+        $or: [{ testApiKey: apiKey }, { liveApiKey: apiKey }]
+      });
+    }
+
+    if (!client) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid API Key or Credentials.'
+      });
+    }
+
+    if (client.status === 'Suspended') {
+      return res.status(403).json({
+        success: false,
+        error: 'Your API account has been suspended. Please contact technical support.'
+      });
+    }
+
+    const isLive = client.liveApiKey === apiKey;
+    if (isLive && client.status !== 'Live') {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account is not approved for LIVE mode yet. Please authenticate using your Sandbox/Test key.'
+      });
+    }
+
+    const secret = process.env.JWT_SECRET || 'trippechalo_jwt_super_secret_key_2026';
+    const environment = isLive ? 'PRODUCTION' : 'SANDBOX';
+
+    const tokenId = jwt.sign(
+      {
+        clientId: client._id,
+        companyName: client.companyName,
+        isLive,
+        environment
+      },
+      secret,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      data: {
+        tokenId,
+        tokenType: 'Bearer',
+        expiresIn: 86400,
+        environment,
+        client: {
+          companyName: client.companyName,
+          email: client.email,
+          status: client.status,
+          apiWalletBalance: isLive ? client.apiWalletBalance : undefined
+        }
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
 
 export const searchFlights = async (req: Request, res: Response) => {
   try {
