@@ -12,28 +12,31 @@ export const createB2BClient = async (req: Request, res: Response) => {
   try {
     const { companyName, contactName, email, status, rateLimitPerMinute, markupPercentage } = req.body;
 
-    if (!companyName || !contactName || !email) {
-      return res.status(400).json({ success: false, error: 'Company Name, Contact Name, and Email are required.' });
-    }
-
-    // Check if email already exists
-    const existingClient = await B2BClient.findOne({ email });
-    if (existingClient) {
-      return res.status(400).json({ success: false, error: 'A B2B partner with this email already exists.' });
-    }
-
     const testApiKey = generateApiKey('test_tc');
     const liveApiKey = generateApiKey('live_tc');
 
     const clientUsername = req.body.username || `TC${Math.floor(1000000000 + Math.random() * 9000000000)}`;
-    const clientPassword = req.body.password || 'India@123';
+    const clientPassword = req.body.password || `Tc#${crypto.randomBytes(4).toString('hex')}!`;
     const authChannel = req.body.auth_channel || 'cugtest.trippechalo.com';
     const basicAuthKey = Buffer.from(`${clientUsername}:${clientPassword}`).toString('base64');
 
+    // Smart fallbacks: ANY 1, ANY 2, or NONE of the 3 can be provided!
+    const finalCompany = (companyName || contactName || (email ? email.split('@')[0] : '') || `B2B Partner ${clientUsername.slice(-4)}`).trim();
+    const finalContact = (contactName || companyName || 'Partner Admin').trim();
+    const finalEmail = (email || `${clientUsername.toLowerCase()}@partner.trippechalo.com`).toLowerCase().trim();
+
+    // Check if real email already exists
+    if (email) {
+      const existingClient = await B2BClient.findOne({ email: finalEmail });
+      if (existingClient) {
+        return res.status(400).json({ success: false, error: 'A B2B partner with this email already exists.' });
+      }
+    }
+
     const newClient = await B2BClient.create({
-      companyName,
-      contactName,
-      email,
+      companyName: finalCompany,
+      contactName: finalContact,
+      email: finalEmail,
       username: clientUsername,
       password: clientPassword,
       basicAuthKey,

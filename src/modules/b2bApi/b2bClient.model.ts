@@ -22,8 +22,8 @@ export interface IB2BClient extends Document {
 
 const b2bClientSchema = new Schema<IB2BClient>(
   {
-    companyName: { type: String, required: true },
-    contactName: { type: String, required: true },
+    companyName: { type: String, default: 'B2B Partner' },
+    contactName: { type: String, default: 'Partner Admin' },
     email: { type: String, required: true, unique: true },
     username: { type: String, sparse: true, index: true },
     password: { type: String },
