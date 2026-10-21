@@ -25,10 +25,19 @@ export const createB2BClient = async (req: Request, res: Response) => {
     const testApiKey = generateApiKey('test_tc');
     const liveApiKey = generateApiKey('live_tc');
 
+    const clientUsername = req.body.username || `TC${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+    const clientPassword = req.body.password || 'India@123';
+    const authChannel = req.body.auth_channel || 'cugtest.trippechalo.com';
+    const basicAuthKey = Buffer.from(`${clientUsername}:${clientPassword}`).toString('base64');
+
     const newClient = await B2BClient.create({
       companyName,
       contactName,
       email,
+      username: clientUsername,
+      password: clientPassword,
+      basicAuthKey,
+      auth_channel: authChannel,
       testApiKey,
       liveApiKey,
       status: status || 'Testing',

@@ -6,45 +6,46 @@ import B2BClient from './b2bClient.model';
 export const authenticateB2BClient = async (req: Request, res: Response) => {
   try {
     let apiKey = req.body.apiKey || req.header('x-api-key');
-    const { username, password, clientEmail } = req.body;
+    const { username, password, clientEmail, auth_channel } = req.body;
 
-    if (!apiKey && req.headers.authorization && req.headers.authorization.startsWith('Basic ')) {
+    let basicUser = '';
+    let basicPass = '';
+
+    if (req.headers.authorization && req.headers.authorization.startsWith('Basic ')) {
       const base64Credentials = req.headers.authorization.split(' ')[1];
       const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
       const [u, p] = credentials.split(':');
-      apiKey = p || u;
+      basicUser = u;
+      basicPass = p;
     }
 
-    if (!apiKey && password) {
-      apiKey = password;
-    }
+    let client = null;
 
-    if (!apiKey) {
-      return res.status(400).json({
-        success: false,
-        error: 'Authentication failed. Please provide apiKey, or username/password, or Basic Authorization header.'
-      });
-    }
+    // 1. Try finding by username & password (GAPI standard)
+    const searchUser = username || basicUser;
+    const searchPass = password || basicPass;
 
-    const query: any = {
-      $or: [{ testApiKey: apiKey }, { liveApiKey: apiKey }]
-    };
-    if (clientEmail || username) {
-      query.email = (clientEmail || username).toLowerCase().trim();
-    }
-
-    let client = await B2BClient.findOne(query);
-
-    if (!client) {
+    if (searchUser && searchPass) {
       client = await B2BClient.findOne({
-        $or: [{ testApiKey: apiKey }, { liveApiKey: apiKey }]
+        username: searchUser,
+        password: searchPass
       });
+    }
+
+    // 2. Fallback to API Key
+    if (!client) {
+      const keyToSearch = apiKey || searchPass || searchUser;
+      if (keyToSearch) {
+        client = await B2BClient.findOne({
+          $or: [{ testApiKey: keyToSearch }, { liveApiKey: keyToSearch }]
+        });
+      }
     }
 
     if (!client) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid API Key or Credentials.'
+        error: 'Invalid username, password, or API credentials.'
       });
     }
 
@@ -55,14 +56,7 @@ export const authenticateB2BClient = async (req: Request, res: Response) => {
       });
     }
 
-    const isLive = client.liveApiKey === apiKey;
-    if (isLive && client.status !== 'Live') {
-      return res.status(403).json({
-        success: false,
-        error: 'Your account is not approved for LIVE mode yet. Please authenticate using your Sandbox/Test key.'
-      });
-    }
-
+    const isLive = client.liveApiKey === apiKey || client.status === 'Live';
     const secret = process.env.JWT_SECRET || 'trippechalo_jwt_super_secret_key_2026';
     const environment = isLive ? 'PRODUCTION' : 'SANDBOX';
 
@@ -70,6 +64,7 @@ export const authenticateB2BClient = async (req: Request, res: Response) => {
       {
         clientId: client._id,
         companyName: client.companyName,
+        username: client.username,
         isLive,
         environment
       },
@@ -77,8 +72,11 @@ export const authenticateB2BClient = async (req: Request, res: Response) => {
       { expiresIn: '24h' }
     );
 
+    // Return both top-level tokenId (GAPI format) and structured data
     res.json({
       success: true,
+      status: 'SUCCESS',
+      tokenId,
       data: {
         tokenId,
         tokenType: 'Bearer',
@@ -87,6 +85,7 @@ export const authenticateB2BClient = async (req: Request, res: Response) => {
         client: {
           companyName: client.companyName,
           email: client.email,
+          username: client.username,
           status: client.status,
           apiWalletBalance: isLive ? client.apiWalletBalance : undefined
         }
@@ -97,12 +96,67 @@ export const authenticateB2BClient = async (req: Request, res: Response) => {
   }
 };
 
+export const getSectors = async (req: Request, res: Response) => {
+  try {
+    const markup = req.b2bClient?.markupPercentage || 0;
+
+    const sectors = await SeriesFare.aggregate([
+      {
+        $match: {
+          status: 'Active',
+          isArchived: false,
+          availableSeats: { $gt: 0 }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            origin: '$origin',
+            destination: '$destination',
+            airline: '$airline'
+          },
+          availableDates: { $addToSet: { $dateToString: { format: '%Y-%m-%d', date: '$travelDate' } } },
+          minFare: { $min: '$adtFare' },
+          totalFlights: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          origin: '$_id.origin',
+          destination: '$_id.destination',
+          airline: '$_id.airline',
+          availableDates: 1,
+          minFare: { $add: ['$minFare', { $multiply: ['$minFare', markup / 100] }] },
+          totalFlights: 1
+        }
+      },
+      {
+        $sort: { origin: 1, destination: 1 }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      status: 'SUCCESS',
+      count: sectors.length,
+      data: sectors
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 export const searchFlights = async (req: Request, res: Response) => {
   try {
-    const { origin, destination, date, adults } = req.query;
+    const params = { ...req.query, ...req.body };
+    const origin = params.origin;
+    const destination = params.destination;
+    const date = params.date || params.travelDate || params.departureDate;
+    const adults = params.adults;
     
     if (!origin || !destination || !date) {
-      return res.status(400).json({ success: false, error: 'origin, destination, and date are required' });
+      return res.status(400).json({ success: false, error: 'origin, destination, and date (or travelDate) are required' });
     }
 
     const searchDate = new Date(date as string);

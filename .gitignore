@@ -42,5 +42,9 @@ build/
 # Firebase credentials
 firebase-service-account.json
 
+# Confidential Documentation & API specs
+docs/
+*.docx
+*.pdf
 
 optimization_log.md

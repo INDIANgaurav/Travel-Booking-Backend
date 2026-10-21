@@ -4,6 +4,10 @@ export interface IB2BClient extends Document {
   companyName: string;
   contactName: string;
   email: string;
+  username?: string;
+  password?: string;
+  basicAuthKey?: string;
+  auth_channel?: string;
   testApiKey: string;
   liveApiKey: string;
   status: 'Pending' | 'Testing' | 'Live' | 'Suspended';
@@ -21,6 +25,10 @@ const b2bClientSchema = new Schema<IB2BClient>(
     companyName: { type: String, required: true },
     contactName: { type: String, required: true },
     email: { type: String, required: true, unique: true },
+    username: { type: String, sparse: true, index: true },
+    password: { type: String },
+    basicAuthKey: { type: String },
+    auth_channel: { type: String, default: 'cugtest.trippechalo.com' },
     testApiKey: { type: String, required: true, unique: true },
     liveApiKey: { type: String, required: true, unique: true },
     status: { 
