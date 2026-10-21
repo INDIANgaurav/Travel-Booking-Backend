@@ -95,10 +95,30 @@ export const authenticate = async (): Promise<string> => {
   });
 
    client.interceptors.response.use(
-    (response) => response,
+    async (response) => {
+      // GAPI sometimes returns 200 OK but with error payload inside JSON for expired tokens
+      if (
+        response.data && 
+        (
+          response.data.errorCode === 401 || 
+          response.data.errorCode === 403 || 
+          (response.data.error && (response.data.error.errorCode === 401 || response.data.error.errorCode === 403))
+        )
+      ) {
+        console.log("GAPI Token Expired (Caught in Response Interceptor), Re-authenticating...");
+        cachedTokenId = null;
+        tokenExpiryDate = null;
+        
+        token = await authenticate();
+        response.config.headers['Authorization'] = `Bearer ${token}`;
+        return axios.request(response.config);
+      }
+      return response;
+    },
     async (error) => {
-      if (error.response && error.response.data && error.response.data.errorCode === 401) {
-         cachedTokenId = null;
+      if (error.response && error.response.data && (error.response.data.errorCode === 401 || error.response.data.errorCode === 403)) {
+        console.log("GAPI Token Expired (Caught in Error Interceptor), Re-authenticating...");
+        cachedTokenId = null;
         tokenExpiryDate = null;
         
         token = await authenticate();
@@ -140,7 +160,10 @@ export const searchFlights = async (searchRequest: any) => {
     return date.toISOString().split('T')[0];
   };
 
-  const isReturn = searchRequest.query.tripType === 'round-trip';
+  const isReturn = Boolean(
+    (searchRequest.query.tripType && searchRequest.query.tripType.toLowerCase().includes('round')) || 
+    searchRequest.query.returnDate
+  );
   const onwardDate = formatGapiDate(searchRequest.query.date);
   const returnDate = isReturn && searchRequest.query.returnDate ? formatGapiDate(searchRequest.query.returnDate) : "";
   
@@ -157,11 +180,18 @@ export const searchFlights = async (searchRequest: any) => {
   // Construct segments array for GAPI
   const segments = [];
   
+  let cabinClassVal = "1";
+  if (isReturn && (destIata === 'DXB' || originIata === 'DXB')) cabinClassVal = "2";
+  else if (searchRequest.query.cabinClass === 'Business') cabinClassVal = "3";
+  else if (searchRequest.query.cabinClass === 'First') cabinClassVal = "4";
+  else if (searchRequest.query.cabinClass === 'Premium Economy') cabinClassVal = "2";
+  else if (['1', '2', '3', '4'].includes(String(searchRequest.query.cabinClass))) cabinClassVal = String(searchRequest.query.cabinClass);
+
   // Onward segment
   segments.push({
     origin: originIata,
     destination: destIata,
-    flightCabinClass: "1", // 1 is Economy in prod
+    flightCabinClass: cabinClassVal,
     preferredDepartureTime: `${onwardDate}T00:00:00`
   });
 
@@ -169,16 +199,19 @@ export const searchFlights = async (searchRequest: any) => {
     segments.push({
       origin: destIata,
       destination: originIata,
-      flightCabinClass: "1", 
+      flightCabinClass: cabinClassVal, 
       preferredDepartureTime: `${returnDate}T00:00:00`
     });
   }
 
+  const indianAirports = new Set(['DEL','BOM','NMI','BLR','MAA','CCU','HYD','AMD','PNQ','GOI','GOX','COK','TRV','CCJ','JAI','ATQ','LKO','BBI','PAT','GAU','IXB','IXZ','IXC','SXR','VNS','BHO','IDR','NAG','RPR','BDQ','STV']);
+  const isIntl = !indianAirports.has(originIata) || !indianAirports.has(destIata);
+
   const payload = {
     onwarddate: onwardDate,
     returndate: returnDate,
-    resultCategory: "1",
-    prefclass: "1",
+    resultCategory: isReturn ? "2" : "1",
+    prefclass: cabinClassVal,
     segments,
     adultCount: searchRequest.query.adults || 1,
     childCount: searchRequest.query.children || 0,
@@ -186,13 +219,26 @@ export const searchFlights = async (searchRequest: any) => {
     endUserIp: "1.1.1.1",
     journeyType: isReturn ? "2" : "1",
     sources: ["ANY"],
-    domIntFlag: "D" // Will need dynamic detection based on origin/dest in production, defaulting to D for now
+    domIntFlag: isIntl ? "I" : "D"
   };
 
   try {
-    const response = await client.post('/search/flights', payload);
+    let response = await client.post('/search/flights', payload);
     
-    // According to docs, responseStatus 1 means success
+    if (response.data.responseStatus !== 1 || !response.data.results || response.data.results.length === 0) {
+      // Retry with alternate cabin class (1 vs 2)
+      const altCabin = payload.prefclass === "1" ? "2" : "1";
+      const altPayload = {
+        ...payload,
+        prefclass: altCabin,
+        segments: payload.segments.map(s => ({ ...s, flightCabinClass: altCabin }))
+      };
+      const altResponse = await client.post('/search/flights', altPayload);
+      if (altResponse.data.responseStatus === 1 && altResponse.data.results?.length > 0) {
+        response = altResponse;
+      }
+    }
+
     if (response.data.responseStatus !== 1) {
       console.warn("GAPI Search returned non-success status", response.data.error);
       return [];
@@ -206,43 +252,28 @@ export const searchFlights = async (searchRequest: any) => {
 };
 
 /**
- * 3. Fare Rule
- */
-export const getFareRule = async (resultSessionId: string) => {
-  const client = await getGapiClient();
-  
-  try {
-    const response = await client.post('/search/fareRule', {
-      resultSessionId: [resultSessionId]
-    });
-
-    if (response.data.responseStatus !== 1) {
-      throw new Error(`GAPI FareRule failed: ${response.data.error?.errorMessage || 'Unknown error'}`);
-    }
-
-    return response.data;
-  } catch (error: any) {
-    console.error('GAPI fareRule error:', error?.response?.data || error.message);
-    throw error;
-  }
-};
-
-/**
- * 3.5 Fare Quote
+ * 3. Fare Quote
+ * @param resultSessionId The resultSessionId from the search response
  */
 export const fareQuote = async (resultSessionId: string) => {
   const client = await getGapiClient();
   
   try {
-    const response = await client.post('/search/fareQuote', {
-      resultSessionId: [resultSessionId]
-    });
+    const payload = { resultSessionId: [resultSessionId] };
+    console.log("============= GAPI FARE QUOTE REQUEST =============");
+    console.log(JSON.stringify(payload, null, 2));
 
+    const response = await client.post('/search/fareQuote', payload);
+    
+    console.log("============= GAPI FARE QUOTE RESPONSE =============");
+    console.log(JSON.stringify(response.data, null, 2));
+    
     if (response.data.responseStatus !== 1) {
-      throw new Error(`GAPI FareQuote failed: ${response.data.error?.errorMessage || 'Unknown error'}`);
+      console.warn("GAPI FareQuote returned non-success status", response.data.error || response.data);
+      return { success: false, error_msg: response.data.error?.errorMessage || "Fare Quote failed" };
     }
 
-    return response.data.results;
+    return { success: true, _data: response.data };
   } catch (error: any) {
     console.error('GAPI fareQuote error:', error?.response?.data || error.message);
     throw error;
@@ -252,23 +283,81 @@ export const fareQuote = async (resultSessionId: string) => {
 /**
  * 4. Book Flight
  */
-export const bookFlight = async (bookingPayload: any) => {
+export const bookFlight = async (
+  resultSessionId: string,
+  paxes: any[],
+  client_details: any,
+  agent_reference: string
+) => {
   const client = await getGapiClient();
   
-  try {
-    const response = await client.post('/flightbooking/flight-booking', bookingPayload);
+  // Map passengers
+  const passengers = paxes.map((p, index) => {
+    let paxType = 1;
+    const pTypeStr = String(p.type || p.passengerType || '').toLowerCase();
+    if (pTypeStr.includes('child') || p.paxType === 2) paxType = 2;
+    if (pTypeStr.includes('infant') || p.paxType === 3) paxType = 3;
 
-    // bookingstatus == "Confirmed" and status == 1 means success
-    if (response.data.status !== 1 || response.data.bookingstatus !== "Confirmed") {
-      throw new Error(`GAPI Booking failed: ${response.data.errorMsg || 'Unknown error'}`);
+    let gender = 1; // Male
+    if (['Mrs', 'Ms', 'Miss'].includes(p.title) || p.gender === 2 || String(p.gender).toLowerCase() === 'female') gender = 2;
+
+    const fullName = p.name || '';
+    const nameParts = fullName.split(' ');
+    const firstName = p.first_name || p.firstName || nameParts[0] || 'Unknown';
+    const lastName = p.last_name || p.lastName || nameParts.slice(1).join(' ') || 'User';
+
+    return {
+      paxType,
+      title: p.title || (gender === 2 ? 'Mrs' : 'Mr'),
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      addressLine1: p.addressLine1 || "Delhi",
+      city: p.city || "Delhi",
+      countryCode: p.countryCode || "IN",
+      nationality: p.nationality || "IN",
+      postalCode: p.postalCode || "110092",
+      dateOfBirth: p.dob || p.dateOfBirth || "",
+      passportNo: p.passport_num || p.passportNum || p.passportNo || "",
+      passportExpiry: p.passport_expiry_date || p.passportExpiry || "",
+      passportIssueDate: p.passportIssueDate || "",
+      gender,
+      isLeadPax: index === 0
+    };
+  });
+
+  try {
+    const payload = {
+      resultSessionId,
+      gSTDetailsRequired: false,
+      contactNo: client_details.phone || "9999999999",
+      email: client_details.email || "test@test.com",
+      passengers
+    };
+
+    console.log("============= GAPI FLIGHT BOOKING REQUEST =============");
+    console.log(JSON.stringify(payload, null, 2));
+
+    const response = await client.post('/flightbooking/flight-booking', payload);
+    
+    console.log("============= GAPI FLIGHT BOOKING RESPONSE =============");
+    console.log(JSON.stringify(response.data, null, 2));
+    
+    if (response.data.status !== 1) {
+      console.warn("GAPI Booking returned non-success status", response.data);
+      return { success: false, error_msg: response.data.errorMsg || "Booking failed" };
     }
 
-    return response.data;
+    return { 
+      success: true, 
+      response_ref: response.data.txid,
+      bookingstatus: response.data.bookingstatus
+    };
   } catch (error: any) {
     console.error('GAPI bookFlight error:', error?.response?.data || error.message);
     throw error;
   }
 };
+
 
 /**
  * 5. Get Booking Details (to fetch PNR)

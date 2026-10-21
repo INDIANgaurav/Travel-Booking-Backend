@@ -85,15 +85,15 @@ const sendEmail = async (to: string, subject: string, htmlContent: string, sende
   }
 };
 
-const getBaseTemplate = (title: string, subtitle: string, bodyContent: string) => `
-  <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 0 auto; padding: 0; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); border: 1px solid #f0f0f0;">
+const getBaseTemplate = (title: string, subtitle: string, bodyContent: string, maxWidth: number = 540) => `
+  <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: ${maxWidth}px; margin: 0 auto; padding: 0; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); border: 1px solid #f0f0f0;">
     <div style="background: #1a3673; padding: 30px 20px; text-align: center;">
       <h1 style="margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 0.5px; display: inline-flex; align-items: center; justify-content: center; gap: 8px;">
         <span style="color: #ffffff;">Trippe</span><span style="color: #60a5fa;">Chalo</span>
       </h1>
       <p style="color: #a3b8e8; margin: 8px 0 0 0; font-size: 14px;">${subtitle}</p>
     </div>
-    <div style="padding: 40px 30px;">
+    <div style="padding: 30px 25px;">
       ${bodyContent}
     </div>
     <div style="background-color: #f8fafc; padding: 25px 20px; text-align: center; border-top: 1px solid #f1f5f9;">
@@ -329,11 +329,42 @@ const generatePDFTicket = async (booking: any, agentName: string): Promise<Buffe
 
 export const sendBookingConfirmationEmail = async (to: string, name: string, booking: any) => {
   const pnr = booking.details?.pnr || booking.bookingId;
-  const flightDetails = `${booking.details?.from || 'Origin'} to ${booking.details?.to || 'Destination'} (${booking.details?.airline || 'Flight'})`;
-  const journeyDate = String(booking.date).split('T')[0] || 'N/A';
-  const amount = booking.totalAmount;
-  const downloadLink = booking._id ? `http://localhost:5173/dashboard/invoice/${booking._id}` : '#';
+  const airline = booking.details?.airline || 'Airline';
+  const flightNo = booking.details?.flightNo || 'FLIGHT';
+  const origin = booking.details?.from || 'Origin';
+  const destination = booking.details?.to || 'Destination';
   
+  const depTime = booking.details?.departureTime 
+    ? new Date(booking.details.departureTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+    : '12:00';
+  const arrTime = booking.details?.arrivalTime 
+    ? new Date(booking.details.arrivalTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+    : '14:00';
+    
+  const travelDateStr = booking.date 
+    ? new Date(booking.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : 'N/A';
+    
+  const amount = booking.totalAmount || 0;
+  const baseFare = (amount * 0.6).toFixed(2);
+  const taxesAndFees = (amount * 0.4).toFixed(2);
+  
+  const ticketLink = booking._id ? `http://localhost:5173/dashboard/ticket/${booking._id}` : '#';
+  const invoiceLink = booking._id ? `http://localhost:5173/dashboard/invoice/${booking._id}` : '#';
+  
+  const passengersList = booking.details?.passengers && booking.details.passengers.length > 0 
+    ? booking.details.passengers 
+    : [{ name: name || 'Passenger', type: 'Adult' }];
+
+  const passengersRows = passengersList.map((pax: any, idx: number) => `
+    <tr style="border-bottom: 1px solid #f1f5f9;">
+      <td style="padding: 10px 8px; font-size: 13px; color: #1e293b; font-weight: 600;">${pax.name || (pax.firstName ? pax.firstName + ' ' + (pax.lastName || '') : 'Passenger ' + (idx + 1))}</td>
+      <td style="padding: 10px 8px; font-size: 12px; color: #64748b;">${pax.type || 'Adult'}</td>
+      <td style="padding: 10px 8px; font-size: 12px; color: #64748b; text-align: center;">${booking.details?.seats?.[idx] || pax.seat || 'Assigned at Check-in'}</td>
+      <td style="padding: 10px 8px; font-size: 12px; color: #16a34a; font-weight: bold; text-align: right;">Confirmed</td>
+    </tr>
+  `).join('');
+
   let attachments = undefined;
   try {
     const pdfBuffer = await generatePDFTicket(booking, name);
@@ -343,42 +374,114 @@ export const sendBookingConfirmationEmail = async (to: string, name: string, boo
   }
 
   const body = `
-    <div style="font-family: Arial, sans-serif;">
-      <p style="color: #334155; font-size: 16px; margin: 0 0 10px 0; font-weight: 500;">Dear ${name},</p>
-      <p style="color: #64748b; font-size: 15px; margin: 0 0 20px 0; line-height: 1.5;">Your flight booking is <strong>Confirmed</strong>! Thank you for choosing TrippeChalo.</p>
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #1e293b;">
+      <p style="color: #334155; font-size: 16px; margin: 0 0 8px 0; font-weight: 600;">Dear ${name},</p>
+      <p style="color: #64748b; font-size: 14px; margin: 0 0 20px 0; line-height: 1.5;">Your flight booking is <strong>Confirmed</strong>! Below are your official <strong>E-Ticket</strong> and <strong>Tax Invoice</strong> details.</p>
       
-      <div style="background-color: #f8fafc; padding: 25px; border-radius: 12px; border: 2px dashed #2563eb; margin-bottom: 25px; text-align: center;">
-        <p style="margin: 0 0 8px 0; font-size: 14px; color: #475569; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Booking Reference / PNR</p>
-        <h2 style="margin: 0; font-size: 32px; color: #1e40af; font-weight: 900; letter-spacing: 3px;">${pnr}</h2>
+      <!-- PNR Hero Box -->
+      <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); padding: 20px; border-radius: 12px; border: 2px dashed #2563eb; margin-bottom: 24px; text-align: center;">
+        <span style="font-size: 11px; text-transform: uppercase; color: #1e40af; font-weight: 700; letter-spacing: 1.5px; display: block; margin-bottom: 4px;">Airline Booking Reference / PNR</span>
+        <h2 style="margin: 0; font-size: 32px; color: #1e40af; font-weight: 900; letter-spacing: 4px;">${pnr}</h2>
+        <span style="font-size: 12px; color: #475569; display: block; margin-top: 6px;">Booking ID: <strong>${booking.bookingId}</strong> &bull; Status: <strong style="color: #16a34a;">CONFIRMED</strong></span>
       </div>
-      
-      <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 25px;">
-        <h3 style="margin: 0 0 15px 0; color: #0f172a; font-size: 16px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">Flight Itinerary</h3>
+
+      <!-- SECTION 1: E-TICKET DETAILS -->
+      <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+        <div style="background-color: #1e293b; color: #ffffff; padding: 10px 16px;">
+          <strong style="font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase;">✈ Official E-Ticket Details</strong>
+        </div>
+        
+        <!-- Flight Route Banner -->
+        <div style="padding: 16px; background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="width: 40%; vertical-align: top;">
+                <p style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0;">${origin}</p>
+                <p style="font-size: 14px; font-weight: 600; color: #2563eb; margin: 4px 0 0 0;">${depTime}</p>
+                <p style="font-size: 12px; color: #64748b; margin: 2px 0 0 0;">${travelDateStr}</p>
+              </td>
+              <td style="width: 20%; text-align: center; vertical-align: middle;">
+                <span style="font-size: 18px; color: #94a3b8;">✈</span>
+                <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0; font-weight: 600;">Non-Stop</p>
+              </td>
+              <td style="width: 40%; text-align: right; vertical-align: top;">
+                <p style="font-size: 20px; font-weight: 800; color: #0f172a; margin: 0;">${destination}</p>
+                <p style="font-size: 14px; font-weight: 600; color: #2563eb; margin: 4px 0 0 0;">${arrTime}</p>
+                <p style="font-size: 12px; color: #64748b; margin: 2px 0 0 0;">${travelDateStr}</p>
+              </td>
+            </tr>
+          </table>
+          <div style="margin-top: 12px; padding-top: 8px; border-top: 1px dashed #cbd5e1; font-size: 12px; color: #475569;">
+            <strong>Airline:</strong> ${airline} (${flightNo}) &bull; <strong>Class:</strong> Economy &bull; <strong>Baggage:</strong> 15 Kg Check-in, 7 Kg Cabin
+          </div>
+        </div>
+
+        <!-- Passengers Table -->
+        <div style="padding: 12px 16px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="border-bottom: 2px solid #e2e8f0; font-size: 11px; text-transform: uppercase; color: #64748b;">
+                <th style="text-align: left; padding: 6px 8px;">Passenger</th>
+                <th style="text-align: left; padding: 6px 8px;">Type</th>
+                <th style="text-align: center; padding: 6px 8px;">Seat</th>
+                <th style="text-align: right; padding: 6px 8px;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${passengersRows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- SECTION 2: TAX INVOICE & PAYMENT SUMMARY -->
+      <div style="background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-bottom: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+        <div style="background-color: #0f172a; color: #ffffff; padding: 10px 16px;">
+          <strong style="font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase;">🧾 Tax Invoice & Fare Breakdown</strong>
+        </div>
+        <div style="padding: 16px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 8px 0; color: #64748b;">Air Fare (Base Fare)</td>
+              <td style="padding: 8px 0; text-align: right; font-weight: 600; color: #0f172a;">₹${baseFare}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 8px 0; color: #64748b;">Airline Taxes & Airport Surcharges</td>
+              <td style="padding: 8px 0; text-align: right; font-weight: 600; color: #0f172a;">₹${taxesAndFees}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 8px 0; color: #64748b;">Payment Method</td>
+              <td style="padding: 8px 0; text-align: right; font-weight: 600; color: #0f172a;">${booking.paymentMethod || 'Online'}</td>
+            </tr>
+            <tr style="background-color: #f8fafc; font-weight: bold; font-size: 14px;">
+              <td style="padding: 10px 8px; color: #0f172a;">Total Gross Amount Paid</td>
+              <td style="padding: 10px 8px; text-align: right; color: #16a34a; font-size: 16px;">₹${amount.toLocaleString('en-IN')}</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Action Buttons Side-by-Side -->
+      <div style="text-align: center; margin: 25px 0 10px 0;">
         <table style="width: 100%; border-collapse: collapse;">
           <tr>
-            <td style="padding: 8px 0; color: #64748b; font-size: 14px; width: 40%;"><strong>Route & Airline</strong></td>
-            <td style="padding: 8px 0; color: #0f172a; font-size: 14px; font-weight: bold;">${flightDetails}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b; font-size: 14px;"><strong>Journey Date</strong></td>
-            <td style="padding: 8px 0; color: #0f172a; font-size: 14px; font-weight: bold;">${journeyDate}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b; font-size: 14px;"><strong>Total Amount Paid</strong></td>
-            <td style="padding: 8px 0; color: #16a34a; font-size: 14px; font-weight: bold;">₹${amount.toLocaleString('en-IN')}</td>
+            <td style="padding: 6px; text-align: center;">
+              <a href="${ticketLink}" style="background-color: #1e293b; color: #ffffff; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; font-size: 13px; display: inline-block; min-width: 160px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                🎫 View / Download E-Ticket
+              </a>
+            </td>
+            <td style="padding: 6px; text-align: center;">
+              <a href="${invoiceLink}" style="background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; font-size: 13px; display: inline-block; min-width: 160px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                🧾 View Tax Invoice
+              </a>
+            </td>
           </tr>
         </table>
       </div>
-
-      <div style="text-align: center; margin-top: 30px;">
-        <a href="${downloadLink}" style="background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; font-size: 14px; display: inline-block;">
-          Download E-Ticket (PDF)
-        </a>
-      </div>
-      <p style="color: #94a3b8; font-size: 12px; margin-top: 20px; text-align: center;">Click the button above to view and download your PDF ticket from your dashboard.</p>
+      <p style="color: #94a3b8; font-size: 11px; margin-top: 15px; text-align: center;">You can access and print your confirmed E-Ticket or Tax Invoice anytime from your account dashboard.</p>
     </div>
   `;
-  await sendEmail(to, `Booking Confirmed - PNR: ${pnr}`, getBaseTemplate('TrippeChalo', 'Booking Confirmation', body), "TrippeChalo Bookings", attachments);
+  await sendEmail(to, `Booking Confirmed: E-Ticket & Tax Invoice - PNR: ${pnr}`, getBaseTemplate('TrippeChalo', 'Booking Confirmation', body, 620), "TrippeChalo Bookings", attachments);
 };
 
 export const sendCancellationEmail = async (to: string, name: string, pnr: string, refundAmount: number) => {

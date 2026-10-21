@@ -180,14 +180,14 @@ export const chatWithAI = async (req: Request, res: Response) => {
 
           console.log(`[AI] Sending Function Response to chat model...`);
           
-          const functionCallResponseMsg = {
+          const modelTurnContent = response.candidates?.[0]?.content || {
             role: "model",
             parts: [{ functionCall: call }]
           };
 
           const newContents = [
             ...currentContents,
-            functionCallResponseMsg,
+            modelTurnContent,
             {
               role: "user",
               parts: [
@@ -218,14 +218,14 @@ export const chatWithAI = async (req: Request, res: Response) => {
 
         } catch (dbError) {
           console.error('[AI DB Error]', dbError);
-          const functionCallResponseMsg = {
+          const modelTurnContent = response.candidates?.[0]?.content || {
             role: "model",
             parts: [{ functionCall: call }]
           };
           
           const newContents = [
             ...currentContents,
-            functionCallResponseMsg,
+            modelTurnContent,
             {
               role: "user",
               parts: [
@@ -259,14 +259,14 @@ export const chatWithAI = async (req: Request, res: Response) => {
         
         console.log(`[AI Function Call] Booking initiated for ${args.flightNumber}`);
         
-        const functionCallResponseMsg = {
+        const modelTurnContent = response.candidates?.[0]?.content || {
           role: "model",
           parts: [{ functionCall: call }]
         };
         
         const newContents = [
           ...currentContents,
-          functionCallResponseMsg,
+          modelTurnContent,
           {
             role: "user",
             parts: [

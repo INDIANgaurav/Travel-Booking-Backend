@@ -35,15 +35,17 @@ export const searchFlights = async (req: Request, res: Response) => {
       departureTime: f.departureTime,
       arrivalTime: f.arrivalTime,
       travelDate: f.travelDate,
-      // Add client-specific markup to the net fare
       fare: f.adtFare + (f.adtFare * (markup / 100)),
       availableSeats: f.availableSeats,
+      bookingType: f.bookingType || 'ONE_WAY',
+      stops: f.segments && f.segments.length > 1 ? f.segments.length - 1 : 0,
+      segments: f.segments && f.segments.length > 0 ? f.segments : undefined,
       checkinBaggage: f.checkinBaggage,
       cabinBaggage: f.cabinBaggage,
       isRefundable: f.isRefundable
     }));
 
-    res.json({ success: true, data: results });
+    res.json({ success: true, count: results.length, data: results });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

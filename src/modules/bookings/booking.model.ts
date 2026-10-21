@@ -34,6 +34,15 @@ export interface IBooking extends Document {
     seats?: string[];
     flightId?: mongoose.Types.ObjectId;
     pnr?: string;
+    isGapiFare?: boolean;
+    isSeriesFare?: boolean;
+    isAirIqFare?: boolean;
+    resultSessionId?: string;
+    searchSessionId?: string;
+    txid?: string;
+    gapi_response?: any;
+    gapi_booking_details?: any;
+    supplierId?: mongoose.Types.ObjectId;
     nexus_response?: any;
     api_error?: string;
     flight_keys?: string[];
@@ -80,42 +89,54 @@ const bookingSchema = new Schema<IBooking>(
     cancellationPenalty: { type: Number },
     platformFee: { type: Number },
 
-    details: {
-      airline: String,
-      from: String,
-      to: String,
-      destination: String,
-      passengers: [{ 
-        name: String, 
-        gender: String, 
-        type: { type: String },
-        dob: String,
-        passportNum: String,
-        passportExpiry: String,
-        nationality: String,
-        status: { type: String, enum: ['CONFIRMED', 'CANCEL_PENDING', 'CANCELLED'], default: 'CONFIRMED' }
-      }],
-      contactDetails: { email: String, phone: String, countryCode: String },
-      seats: [String],
-      flightId: { type: Schema.Types.ObjectId, ref: 'Flight' },
-      pnr: String,
-      nexus_response: Schema.Types.Mixed,
-      api_error: String,
-      flight_keys: Array,
-      nexus_query: Schema.Types.Mixed,
-      currency: String,
-      total_price: Number,
-      commission: { type: Number, default: 0 },
-      
-      // Hotel Specific
-      hotelId: String,
-      hotelName: String,
-      checkIn: String,
-      checkOut: String,
-      roomType: String,
-      address: String,
-      guests: Number,
-    },
+    details: new Schema(
+      {
+        airline: String,
+        from: String,
+        to: String,
+        destination: String,
+        passengers: [{ 
+          name: String, 
+          gender: String, 
+          type: { type: String },
+          dob: String,
+          passportNum: String,
+          passportExpiry: String,
+          nationality: String,
+          status: { type: String, enum: ['CONFIRMED', 'CANCEL_PENDING', 'CANCELLED'], default: 'CONFIRMED' }
+        }],
+        contactDetails: { email: String, phone: String, countryCode: String },
+        seats: [String],
+        flightId: { type: Schema.Types.ObjectId, ref: 'Flight' },
+        pnr: String,
+        isGapiFare: { type: Boolean, default: false },
+        isSeriesFare: { type: Boolean, default: false },
+        isAirIqFare: { type: Boolean, default: false },
+        resultSessionId: String,
+        searchSessionId: String,
+        txid: String,
+        gapi_response: Schema.Types.Mixed,
+        gapi_booking_details: Schema.Types.Mixed,
+        supplierId: { type: Schema.Types.ObjectId },
+        nexus_response: Schema.Types.Mixed,
+        api_error: String,
+        flight_keys: Array,
+        nexus_query: Schema.Types.Mixed,
+        currency: String,
+        total_price: Number,
+        commission: { type: Number, default: 0 },
+        
+        // Hotel Specific
+        hotelId: String,
+        hotelName: String,
+        checkIn: String,
+        checkOut: String,
+        roomType: String,
+        address: String,
+        guests: Number,
+      },
+      { _id: false, strict: false }
+    ),
   },
   {
     timestamps: true,

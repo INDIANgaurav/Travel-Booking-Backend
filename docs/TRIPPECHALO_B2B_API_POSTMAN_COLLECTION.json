@@ -1,0 +1,125 @@
+{
+  "info": {
+    "name": "TrippeChalo B2B Flight API Collection",
+    "_postman_id": "tc-b2b-api-v1",
+    "description": "Official TrippeChalo B2B Fixed Departure Flight Distribution API Collection. Includes Search and Book endpoints with sample request payloads.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.trippechalo.com/api/v1/b2b",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "YOUR_TEST_OR_LIVE_API_KEY",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Search Flights (Domestic Non-Stop)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{apiKey}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/flights/search?origin=DEL&destination=BOM&date=2026-12-10&adults=2",
+          "host": ["{{baseUrl}}"],
+          "path": ["flights", "search"],
+          "query": [
+            { "key": "origin", "value": "DEL" },
+            { "key": "destination", "value": "BOM" },
+            { "key": "date", "value": "2026-12-10" },
+            { "key": "adults", "value": "2" }
+          ]
+        },
+        "description": "Searches available Fixed Departure flights between DEL and BOM on 10-Dec-2026 for 2 adults."
+      }
+    },
+    {
+      "name": "2. Search Flights (International Dubai Non-Stop)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{apiKey}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/flights/search?origin=DEL&destination=DXB&date=2026-12-18&adults=1",
+          "host": ["{{baseUrl}}"],
+          "path": ["flights", "search"],
+          "query": [
+            { "key": "origin", "value": "DEL" },
+            { "key": "destination", "value": "DXB" },
+            { "key": "date", "value": "2026-12-18" },
+            { "key": "adults", "value": "1" }
+          ]
+        },
+        "description": "Searches Fixed Departure flights between Delhi (DEL) and Dubai (DXB) on 18-Dec-2026."
+      }
+    },
+    {
+      "name": "3. Search Flights (Round-Trip Bali with Layover)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{apiKey}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/flights/search?origin=DEL&destination=DPS&date=2027-01-05&adults=2",
+          "host": ["{{baseUrl}}"],
+          "path": ["flights", "search"],
+          "query": [
+            { "key": "origin", "value": "DEL" },
+            { "key": "destination", "value": "DPS" },
+            { "key": "date", "value": "2027-01-05" },
+            { "key": "adults", "value": "2" }
+          ]
+        },
+        "description": "Searches 4-segment Round-Trip flight for Bali via Dubai on 05-Jan-2027."
+      }
+    },
+    {
+      "name": "4. Book Flight (Test & Live Mode)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{apiKey}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sfId\": \"SF-TC-C1A-20261210\",\n  \"passengers\": [\n    {\n      \"title\": \"Mr\",\n      \"firstName\": \"Ramesh\",\n      \"lastName\": \"Sharma\",\n      \"type\": \"ADULT\",\n      \"gender\": \"MALE\",\n      \"dob\": \"1988-06-12\"\n    },\n    {\n      \"title\": \"Mrs\",\n      \"firstName\": \"Pooja\",\n      \"lastName\": \"Sharma\",\n      \"type\": \"ADULT\",\n      \"gender\": \"FEMALE\",\n      \"dob\": \"1992-04-20\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/flights/book",
+          "host": ["{{baseUrl}}"],
+          "path": ["flights", "book"]
+        },
+        "description": "Issues flight ticket. In test mode (with test_tc_ key), confirms mock PNR. In live mode (with live_tc_ key), checks API wallet, decrements seat, and confirms PNR."
+      }
+    }
+  ]
+}

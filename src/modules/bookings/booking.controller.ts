@@ -13,6 +13,7 @@ import Transaction from '../wallet/wallet.model';
 import { createAdminNotification } from '../notifications/notification.controller';
 import { sendBookingConfirmationEmail, sendCancellationEmail } from '../../utils/email.service';
 import { getIo } from '../../config/socket';
+import { executeFlightSupplierBooking } from './flightBookingProcessor';
 
 export const getMyBookings = async (req: AuthRequest, res: Response) => {
   try {
@@ -43,6 +44,13 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
   let session;
   try {
     const { totalAmount, details, date, bookingMode = 'PERSONAL', paymentMethod = 'RAZORPAY', idempotencyKey, promoCode } = req.body;
+
+    console.log("=========================================================");
+    console.log("🚨 INCOMING FLIGHT BOOKING REQUEST (createFlightBooking)");
+    console.log("Payment Method:", paymentMethod);
+    console.log("Is GAPI Fare?:", details?.isGapiFare);
+    console.log("Details Payload:", JSON.stringify(details, null, 2));
+    console.log("=========================================================");
 
     if (!totalAmount || totalAmount <= 0) {
       return res.status(400).json({ message: 'Invalid total amount' });
@@ -180,180 +188,12 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
 
       let apiBookingFailed = false;
 
-      // 1. If it's a NexusDMC flight
-      if (details && !details.isSeriesFare && !details.isGapiFare) {
-        try {
-          const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
-          
-          const paxes = (passengers || []).map((p: any) => {
-            const isChildOrInfant = p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT';
-            let finalTitle = p.title || (p.gender === 'Male' ? (isChildOrInfant ? 'Mstr' : 'Mr') : (isChildOrInfant ? 'Miss' : 'Ms'));
-            let upperTitle = finalTitle.toUpperCase();
-            if (isChildOrInfant) {
-              if (upperTitle === 'MR' || upperTitle === 'MSTR') finalTitle = 'Mstr';
-              else if (upperTitle === 'MS' || upperTitle === 'MRS' || upperTitle === 'MISS') finalTitle = 'Miss';
-              else finalTitle = 'Mstr';
-            } else {
-              if (upperTitle === 'MSTR' || upperTitle === 'MR') finalTitle = 'Mr';
-              else if (upperTitle === 'MISS' || upperTitle === 'MS') finalTitle = 'Ms';
-              else if (upperTitle === 'MRS') finalTitle = 'Mrs';
-              else finalTitle = 'Mr';
-            }
-            let defaultDob = '1990-01-01';
-            if (p.type?.toUpperCase() === 'CHILD') defaultDob = '2018-01-01'; 
-            if (p.type?.toUpperCase() === 'INFANT') defaultDob = '2025-01-01'; 
-            
-            return {
-              title: finalTitle,
-              first_name: p.name.split(' ')[0] || 'Unknown',
-              last_name: p.name.split(' ').slice(1).join(' ') || 'User',
-              dob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : defaultDob,
-              passport_num: p.passportNum || null,
-              passport_expiry_date: p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0] : null,
-              nationality: p.nationality || 'IN',
-              type: isChildOrInfant ? (p.type?.toUpperCase() === 'CHILD' ? 'child' : 'infant') : 'adult'
-            };
-          });
-
-          const client_details = {
-            email: contactDetails?.email || '',
-            phone: contactDetails?.phone || ''
-          };
-
-          const agent_reference = newBooking.bookingId.replace(/-/g, '');
-          const bookResult = await bookFlight(nexus_query, flight_keys, total_price, currency, paxes, client_details, agent_reference);
-          
-          if (bookResult && bookResult.success) {
-            details.pnr = bookResult.response_ref; 
-            details.nexus_response = bookResult;
-            newBooking.details = details;
-            newBooking.status = 'CONFIRMED';
-          } else {
-            apiBookingFailed = true;
-            details.api_error = bookResult?.error_msg || 'Nexus returned false success';
-            newBooking.details = details;
-          }
-        } catch (nexusError: any) {
-          console.error('NexusDMC Booking failed for Wallet payment:', nexusError);
-          apiBookingFailed = true;
-          details.api_error = nexusError.message || 'Exception during Nexus booking';
-          newBooking.details = details;
-        }
-      } 
-      // 2. If it's a SeriesFare flight
-      else if (details && details.isSeriesFare && details.flight_keys && details.flight_keys.length > 0) {
-        try {
-          const sfId = details.flight_keys[0];
-          const passengers = details.passengers || [];
-          let seatCount = 0;
-          if (passengers.length > 0) {
-             seatCount = passengers.filter((p: any) => p.type?.toUpperCase() !== 'INFANT' || p.needsSeat).length;
-          } else if (details.seats && Array.isArray(details.seats)) {
-             seatCount = details.seats.length;
-          }
-          if (seatCount === 0) seatCount = 1;
-
-          const sfIdClean = sfId.replace('SF_', '');
-          const mongooseSF = require('mongoose');
-          if (mongooseSF.Types.ObjectId.isValid(sfIdClean)) {
-            const SeatHold = require('../seriesFare/seatHold.model').default;
-            const hold = await SeatHold.findOne({ userId: req.user._id, flightId: sfIdClean, status: 'ACTIVE' });
-            
-            if (!hold || new Date() > hold.expiresAt) {
-               apiBookingFailed = true;
-               details.api_error = 'Seat hold expired or not found. Please hold the seats before booking.';
-               newBooking.details = details;
-            } else {
-               hold.status = 'BOOKED';
-               await hold.save();
-               
-               const seriesFare = await SeriesFare.findById(sfIdClean);
-               if (seriesFare) {
-                  if (seriesFare.availableSeats === 0) {
-                      seriesFare.status = 'SoldOut';
-                      await seriesFare.save();
-                  }
-                  details.pnr = seriesFare.airlinePnr || 'PENDING';
-                  newBooking.details = details;
-                  newBooking.status = 'CONFIRMED';
-               }
-            }
-          }
-        } catch (sfError) {
-          console.error('Failed to decrement SeriesFare seats for Wallet payment:', sfError);
-          apiBookingFailed = true;
-          details.api_error = 'Failed to book series fare seats';
-          newBooking.details = details;
-        }
-      } 
-      // 3. If it's a GAPI flight
-      else if (details && details.isGapiFare) {
-        try {
-          const { resultSessionId, passengers, contactDetails } = details;
-          
-          const paxes = (passengers || []).map((p: any, index: number) => {
-            const isChildOrInfant = p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT';
-            let finalTitle = p.title || (p.gender === 'Male' ? (isChildOrInfant ? 'Mstr' : 'Mr') : (isChildOrInfant ? 'Miss' : 'Ms'));
-            
-            let paxType = 1; // Adult
-            if (p.type?.toUpperCase() === 'CHILD') paxType = 2;
-            if (p.type?.toUpperCase() === 'INFANT') paxType = 3;
-            
-            return {
-              paxType,
-              title: finalTitle,
-              firstName: p.name.split(' ')[0] || 'Unknown',
-              lastName: p.name.split(' ').slice(1).join(' ') || 'User',
-              addressLine1: "DELHI", // Defaulting to generic as per API sample
-              city: "DELHI",
-              countryCode: p.nationality || "IN",
-              nationality: p.nationality || "IN",
-              postalCode: "110092",
-              dateOfBirth: p.dob ? new Date(p.dob).toISOString().split('T')[0] : (paxType===1 ? "1990-01-01" : paxType===2 ? "2018-01-01" : "2025-01-01"),
-              passportNo: p.passportNum || "",
-              passportExpiry: p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0] : "2030-01-01",
-              passportIssueDate: "2020-01-01",
-              gender: p.gender === 'Female' ? 2 : 1, // 1 for Male, 2 for Female
-              paxId: index,
-              isLeadPax: index === 0
-            };
-          });
-
-          const bookPayload = {
-            passengers: paxes,
-            resultSessionId: resultSessionId,
-            contactNo: contactDetails?.phone || "9999999999",
-            email: contactDetails?.email || "dummy@test.com",
-            gSTDetailsRequired: false
-          };
-
-          const bookResult = await bookFlightGapi(bookPayload);
-          
-          if (bookResult && bookResult.bookingstatus === "Confirmed" && bookResult.status === 1) {
-            details.txid = bookResult.txid;
-            details.gapi_response = bookResult;
-            
-            // Try to fetch PNR immediately
-            try {
-               const detailsResult = await getBookingDetailsGapi(bookResult.txid);
-               details.pnr = detailsResult?.FlightBookingSecotorDetails?.[0]?.passengerInfo?.[0]?.airlinepnr || bookResult.txid;
-            } catch(e) {
-               console.error("GAPI Get Booking Details error during booking:", e);
-               details.pnr = bookResult.txid; // Fallback to txid if PNR fetch fails
-            }
-
-            newBooking.details = details;
-            newBooking.status = 'CONFIRMED';
-          } else {
-            apiBookingFailed = true;
-            details.api_error = bookResult?.errorMsg || 'GAPI returned false success';
-            newBooking.details = details;
-          }
-        } catch (gapiError: any) {
-          console.error('GAPI Booking failed for Wallet payment:', gapiError);
-          apiBookingFailed = true;
-          details.api_error = gapiError.message || 'Exception during GAPI booking';
-          newBooking.details = details;
+      if (details) {
+        const result = await executeFlightSupplierBooking(newBooking.bookingId, details, req.user._id);
+        apiBookingFailed = result.apiBookingFailed;
+        newBooking.details = result.details;
+        if (!apiBookingFailed) {
+          newBooking.status = result.status;
         }
       }
 
@@ -617,119 +457,12 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
       // If it's a flight, call NexusDMC Book API
       const details = booking.details as any;
       let apiBookingFailed = false;
-      if (booking.type === 'FLIGHT' && details && !details.isSeriesFare) {
-        try {
-          const { nexus_query, flight_keys, total_price, currency, passengers, contactDetails } = details;
-          
-          // Map passengers to NexusDMC expected format
-          const paxes = (passengers || []).map((p: any) => {
-            const isChildOrInfant = p.type?.toUpperCase() === 'CHILD' || p.type?.toUpperCase() === 'INFANT';
-            let finalTitle = p.title || (p.gender === 'Male' ? (isChildOrInfant ? 'Mstr' : 'Mr') : (isChildOrInfant ? 'Miss' : 'Ms'));
-            
-            // Normalize to Title Case and strictly enforce valid titles per passenger type
-            let upperTitle = finalTitle.toUpperCase();
-            
-            if (isChildOrInfant) {
-              if (upperTitle === 'MR' || upperTitle === 'MSTR') finalTitle = 'Mstr';
-              else if (upperTitle === 'MS' || upperTitle === 'MRS' || upperTitle === 'MISS') finalTitle = 'Miss';
-              else finalTitle = 'Mstr'; // fallback
-            } else {
-              if (upperTitle === 'MSTR' || upperTitle === 'MR') finalTitle = 'Mr';
-              else if (upperTitle === 'MISS' || upperTitle === 'MS') finalTitle = 'Ms';
-              else if (upperTitle === 'MRS') finalTitle = 'Mrs';
-              else finalTitle = 'Mr'; // fallback
-            }
 
-            let defaultDob = '1990-01-01';
-            if (p.type?.toUpperCase() === 'CHILD') defaultDob = '2018-01-01'; // 8 years old
-            if (p.type?.toUpperCase() === 'INFANT') defaultDob = '2025-01-01'; // 1 year old
-            
-            return {
-              title: finalTitle,
-            first_name: p.name.split(' ')[0] || 'Unknown',
-            last_name: p.name.split(' ').slice(1).join(' ') || 'User',
-            dob: p.dob ? new Date(p.dob).toISOString().split('T')[0] : defaultDob,
-            passport_num: p.passportNum || null,
-            passport_expiry_date: p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0] : null,
-            nationality: p.nationality || 'IN',
-            type: isChildOrInfant ? (p.type?.toUpperCase() === 'CHILD' ? 'child' : 'infant') : 'adult'
-          };
-          });
-
-          const client_details = {
-            email: contactDetails?.email || '',
-            phone: contactDetails?.phone || ''
-          };
-
-          const agent_reference = booking.bookingId.replace(/-/g, '');
-
-          const bookResult = await bookFlight(nexus_query, flight_keys, total_price, currency, paxes, client_details, agent_reference);
-          
-          if (bookResult && bookResult.success) {
-            // Update booking with PNR from NexusDMC
-            details.pnr = bookResult.response_ref; // Using response_ref as PNR for now
-            details.nexus_response = bookResult;
-            booking.details = details;
-            booking.markModified('details');
-          } else {
-            apiBookingFailed = true;
-            details.api_error = bookResult?.error_msg || 'Nexus returned false success';
-            booking.details = details;
-            booking.markModified('details');
-          }
-        } catch (nexusError: any) {
-          console.error('NexusDMC Booking failed after payment:', nexusError);
-          // We still confirm the payment but might need manual intervention for the ticket
-          apiBookingFailed = true;
-          details.api_error = nexusError.message || 'Exception during Nexus booking';
-          booking.details = details;
-          booking.markModified('details');
-        }
-      } else if (booking.type === 'FLIGHT' && details && details.isSeriesFare && details.flight_keys && details.flight_keys.length > 0) {
-        try {
-          const sfId = details.flight_keys[0];
-          const passengers = details.passengers || [];
-          
-          let seatCount = 0;
-          if (passengers.length > 0) {
-             seatCount = passengers.filter((p: any) => p.type?.toUpperCase() !== 'INFANT' || p.needsSeat).length;
-          } else if (details.seats && Array.isArray(details.seats)) {
-             seatCount = details.seats.length;
-          }
-          if (seatCount === 0) seatCount = 1;
-
-          const sfIdClean = sfId.replace('SF_', '');
-          
-          // Check if valid ObjectId to prevent CastError
-          const mongoose = require('mongoose');
-          if (mongoose.Types.ObjectId.isValid(sfIdClean)) {
-             const SeatHold = require('../seriesFare/seatHold.model').default;
-             const hold = await SeatHold.findOne({ userId: req.user._id, flightId: sfIdClean, status: 'ACTIVE' });
-             
-             if (!hold || new Date() > hold.expiresAt) {
-                apiBookingFailed = true;
-                details.api_error = 'Seat hold expired before payment could be verified.';
-                booking.details = details;
-                booking.markModified('details');
-             } else {
-                hold.status = 'BOOKED';
-                await hold.save();
-                
-                const seriesFare = await SeriesFare.findById(sfIdClean);
-                if (seriesFare) {
-                   if (seriesFare.availableSeats === 0) {
-                       seriesFare.status = 'SoldOut';
-                       await seriesFare.save();
-                   }
-                   details.pnr = seriesFare.airlinePnr || 'PENDING';
-                   booking.details = details;
-                   booking.markModified('details');
-                }
-             }
-          }
-        } catch (sfError) {
-          console.error('Failed to decrement SeriesFare seats:', sfError);
-        }
+      if (booking.type === 'FLIGHT' && details) {
+        const result = await executeFlightSupplierBooking(booking.bookingId, details, req.user._id);
+        apiBookingFailed = result.apiBookingFailed;
+        booking.details = result.details;
+        booking.markModified('details');
       }
 
       if (apiBookingFailed) {

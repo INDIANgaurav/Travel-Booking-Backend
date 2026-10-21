@@ -37,10 +37,6 @@ const b2bClientSchema = new Schema<IB2BClient>(
   { timestamps: true }
 );
 
-// Indexes for fast lookup by API keys
-b2bClientSchema.index({ testApiKey: 1 });
-b2bClientSchema.index({ liveApiKey: 1 });
-b2bClientSchema.index({ email: 1 });
-
+// Indexes already created by unique: true on fields
 const B2BClient = mongoose.model<IB2BClient>('B2BClient', b2bClientSchema);
 export default B2BClient;
