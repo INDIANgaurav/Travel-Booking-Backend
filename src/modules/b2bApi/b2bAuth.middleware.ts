@@ -51,8 +51,12 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
     const apiKeyHeader = req.header('x-api-key') || (req.query.apiKey as string) || (req.query['x-api-key'] as string);
 
     let token = tokenHeader;
-    if (!token && authHeader && authHeader.startsWith('Bearer ')) {
-      token = authHeader.split(' ')[1];
+    if (!token && authHeader) {
+      token = authHeader;
+    }
+
+    if (token) {
+      token = token.replace(/Bearer\s+/gi, '').replace(/^["']|["']$/g, '').trim();
     }
 
     // CASE A: Token provided (GAPI / OAuth Bearer Standard)
@@ -94,7 +98,7 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
       } catch (err: any) {
         return res.status(401).json({
           success: false,
-          error: 'Session token expired or invalid. Please re-authenticate via /auth/token'
+          error: `Session token invalid (${err.message}). Please re-authenticate via /oauth2/tokens`
         });
       }
     }
