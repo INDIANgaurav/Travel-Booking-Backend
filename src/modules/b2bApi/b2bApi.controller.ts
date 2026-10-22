@@ -159,18 +159,24 @@ export const getSectors = async (req: Request, res: Response) => {
 export const searchFlights = async (req: Request, res: Response) => {
   try {
     const params = { ...req.query, ...req.body };
-    const origin = params.origin;
-    const destination = params.destination;
-    const date = params.date || params.travelDate || params.departureDate;
-    const adults = params.adults;
+    const origin = params.origin || (params.segments && params.segments[0]?.origin);
+    const destination = params.destination || (params.segments && params.segments[0]?.destination);
+    const rawDate = params.date || params.travelDate || params.departureDate || params.onwarddate || (params.segments && params.segments[0]?.preferredDepartureTime);
+    const date = rawDate ? (typeof rawDate === 'string' && rawDate.includes('T') ? rawDate.split('T')[0] : rawDate) : null;
+    const adults = params.adults || params.adultCount;
     
     if (!origin || !destination || !date) {
-      return res.status(400).json({ success: false, error: 'origin, destination, and date (or travelDate) are required' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'origin, destination, and date (or travelDate / segments) are required. Example: { "origin": "DEL", "destination": "BOM", "date": "2026-12-10" }' 
+      });
     }
 
     const searchDate = new Date(date as string);
-    const startOfDay = new Date(searchDate.setHours(0,0,0,0));
-    const endOfDay = new Date(searchDate.setHours(23,59,59,999));
+    const startOfDay = new Date(searchDate);
+    startOfDay.setUTCHours(0,0,0,0);
+    const endOfDay = new Date(searchDate);
+    endOfDay.setUTCHours(23,59,59,999);
 
     const paxCount = adults ? parseInt(adults as string) : 1;
     const isLive = Boolean(req.isLiveMode);
