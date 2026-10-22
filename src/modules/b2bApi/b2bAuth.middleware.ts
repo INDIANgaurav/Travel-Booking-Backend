@@ -46,9 +46,9 @@ const checkRateLimit = (client: any): { allowed: boolean; limit: number; remaini
 
 export const protectB2BApi = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const tokenHeader = req.header('tokenId') || req.header('token');
+    const tokenHeader = req.header('tokenId') || req.header('token') || (req.query.tokenId as string) || (req.query.token as string);
     const authHeader = req.header('authorization');
-    const apiKeyHeader = req.header('x-api-key');
+    const apiKeyHeader = req.header('x-api-key') || (req.query.apiKey as string) || (req.query['x-api-key'] as string);
 
     let token = tokenHeader;
     if (!token && authHeader && authHeader.startsWith('Bearer ')) {
