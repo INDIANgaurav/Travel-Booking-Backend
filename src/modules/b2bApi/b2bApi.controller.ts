@@ -99,14 +99,23 @@ export const authenticateB2BClient = async (req: Request, res: Response) => {
 export const getSectors = async (req: Request, res: Response) => {
   try {
     const markup = req.b2bClient?.markupPercentage || 0;
+    const isLive = Boolean(req.isLiveMode);
+
+    const matchQuery: any = {
+      status: 'Active',
+      isArchived: false,
+      availableSeats: { $gt: 0 }
+    };
+
+    if (isLive) {
+      matchQuery.isTestFlight = { $ne: true };
+    } else {
+      matchQuery.isTestFlight = true;
+    }
 
     const sectors = await SeriesFare.aggregate([
       {
-        $match: {
-          status: 'Active',
-          isArchived: false,
-          availableSeats: { $gt: 0 }
-        }
+        $match: matchQuery
       },
       {
         $group: {
@@ -164,15 +173,24 @@ export const searchFlights = async (req: Request, res: Response) => {
     const endOfDay = new Date(searchDate.setHours(23,59,59,999));
 
     const paxCount = adults ? parseInt(adults as string) : 1;
+    const isLive = Boolean(req.isLiveMode);
 
-    const flights = await SeriesFare.find({
+    const flightQuery: any = {
       status: 'Active',
       isArchived: false,
       origin: (origin as string).toUpperCase(),
       destination: (destination as string).toUpperCase(),
       travelDate: { $gte: startOfDay, $lte: endOfDay },
       availableSeats: { $gte: paxCount }
-    });
+    };
+
+    if (isLive) {
+      flightQuery.isTestFlight = { $ne: true };
+    } else {
+      flightQuery.isTestFlight = true;
+    }
+
+    const flights = await SeriesFare.find(flightQuery);
 
     const markup = req.b2bClient.markupPercentage || 0;
 
@@ -212,6 +230,16 @@ export const bookFlight = async (req: Request, res: Response) => {
     const flight = await SeriesFare.findOne({ sfId, status: 'Active', isArchived: false });
     if (!flight) {
       return res.status(404).json({ success: false, error: 'Flight not found or inactive' });
+    }
+
+    const isLive = Boolean(req.isLiveMode);
+
+    // Environment safety checks
+    if (isLive && flight.isTestFlight) {
+      return res.status(403).json({ success: false, error: 'Test flights cannot be booked in Live production mode.' });
+    }
+    if (!isLive && !flight.isTestFlight) {
+      return res.status(403).json({ success: false, error: 'This flight is a Live flight and not available in Sandbox test environment.' });
     }
 
     if (flight.availableSeats < passengers.length) {

@@ -44,6 +44,7 @@ firebase-service-account.json
 
 # Confidential Documentation & API specs
 docs/
+*.doc
 *.docx
 *.pdf
 

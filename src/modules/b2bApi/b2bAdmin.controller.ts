@@ -15,10 +15,20 @@ export const createB2BClient = async (req: Request, res: Response) => {
     const testApiKey = generateApiKey('test_tc');
     const liveApiKey = generateApiKey('live_tc');
 
-    const clientUsername = req.body.username || `TC${Math.floor(1000000000 + Math.random() * 9000000000)}`;
-    const clientPassword = req.body.password || `Tc#${crypto.randomBytes(4).toString('hex')}!`;
+    // Generate SIMPLE, readable credentials
+    // Username: lowercase company slug + 4 random digits (e.g. mmt_2847, skyline_9301)
+    // Password: Capitalized short + @ + 4 random digits (e.g. Mmt@2847, Sky@9301)
+    const companySlug = (companyName || contactName || 'partner')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 10);
+    const randomPin = Math.floor(1000 + Math.random() * 9000); // 4-digit pin
+
+    const clientUsername = req.body.username || `${companySlug}_${randomPin}`;
+    const clientPassword = req.body.password || `${companySlug.charAt(0).toUpperCase()}${companySlug.slice(1, 4)}@${randomPin}`;
     const authChannel = req.body.auth_channel || 'cugtest.trippechalo.com';
     const basicAuthKey = Buffer.from(`${clientUsername}:${clientPassword}`).toString('base64');
+
 
     // Smart fallbacks: ANY 1, ANY 2, or NONE of the 3 can be provided!
     const finalCompany = (companyName || contactName || (email ? email.split('@')[0] : '') || `B2B Partner ${clientUsername.slice(-4)}`).trim();
@@ -67,19 +77,66 @@ export const getB2BClients = async (req: Request, res: Response) => {
 export const updateB2BClient = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { status, rateLimitPerMinute, markupPercentage } = req.body;
+    const { 
+      companyName, 
+      contactName, 
+      email, 
+      username, 
+      password, 
+      status, 
+      isVerified,
+      rateLimitPerMinute, 
+      markupPercentage,
+      apiWalletBalance 
+    } = req.body;
 
-    const client = await B2BClient.findByIdAndUpdate(
-      id,
-      { $set: { status, rateLimitPerMinute, markupPercentage } },
-      { new: true }
-    );
-
-    if (!client) {
+    const currentClient = await B2BClient.findById(id);
+    if (!currentClient) {
       return res.status(404).json({ success: false, error: 'B2B Client not found' });
     }
 
-    res.json({ success: true, data: client });
+    // Check if new email is taken by another client
+    if (email && email.toLowerCase().trim() !== currentClient.email.toLowerCase().trim()) {
+      const emailConflict = await B2BClient.findOne({ 
+        email: email.toLowerCase().trim(), 
+        _id: { $ne: id } 
+      });
+      if (emailConflict) {
+        return res.status(400).json({ success: false, error: 'A B2B partner with this email already exists.' });
+      }
+    }
+
+    const updateData: any = {};
+    if (companyName !== undefined) updateData.companyName = companyName.trim();
+    if (contactName !== undefined) updateData.contactName = contactName.trim();
+    if (email !== undefined) updateData.email = email.toLowerCase().trim();
+    if (status !== undefined) updateData.status = status;
+    if (isVerified !== undefined) {
+      updateData.isVerified = Boolean(isVerified);
+    } else if (status === 'Live') {
+      updateData.isVerified = true;
+    }
+    if (rateLimitPerMinute !== undefined) updateData.rateLimitPerMinute = Number(rateLimitPerMinute);
+    if (markupPercentage !== undefined) updateData.markupPercentage = Number(markupPercentage);
+    if (apiWalletBalance !== undefined) updateData.apiWalletBalance = Number(apiWalletBalance);
+
+    const finalUsername = username !== undefined ? username.trim() : currentClient.username;
+    const finalPassword = password !== undefined ? password.trim() : currentClient.password;
+
+    if (username !== undefined) updateData.username = finalUsername;
+    if (password !== undefined) updateData.password = finalPassword;
+
+    if (finalUsername && finalPassword) {
+      updateData.basicAuthKey = Buffer.from(`${finalUsername}:${finalPassword}`).toString('base64');
+    }
+
+    const updatedClient = await B2BClient.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      { new: true }
+    );
+
+    res.json({ success: true, data: updatedClient });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

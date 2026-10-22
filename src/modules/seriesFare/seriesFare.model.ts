@@ -41,6 +41,7 @@ export interface ISeriesFare extends Document {
   cabinBaggage?: string;
   mealsIncluded?: boolean;
   isRefundable?: boolean;
+  isTestFlight?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -85,6 +86,7 @@ const seriesFareSchema = new Schema<ISeriesFare>(
     cabinBaggage: { type: String, default: '7 KG' },
     mealsIncluded: { type: Boolean, default: false },
     isRefundable: { type: Boolean, default: false },
+    isTestFlight: { type: Boolean, default: false }
   },
   { timestamps: true }
 );

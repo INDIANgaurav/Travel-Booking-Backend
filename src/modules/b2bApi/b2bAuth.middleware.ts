@@ -12,6 +12,38 @@ declare global {
   }
 }
 
+// In-memory partner rate limiting tracker: clientId -> { count, resetTime }
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+// Periodic garbage collection every 10 minutes for inactive clients
+setInterval(() => {
+  const now = Date.now();
+  for (const [clientId, usage] of rateLimitMap.entries()) {
+    if (now > usage.resetTime) {
+      rateLimitMap.delete(clientId);
+    }
+  }
+}, 10 * 60 * 1000);
+
+const checkRateLimit = (client: any): { allowed: boolean; limit: number; remaining: number } => {
+  const clientId = client._id.toString();
+  const limit = client.rateLimitPerMinute || 60;
+  const now = Date.now();
+
+  const usage = rateLimitMap.get(clientId);
+  if (!usage || now > usage.resetTime) {
+    rateLimitMap.set(clientId, { count: 1, resetTime: now + 60000 });
+    return { allowed: true, limit, remaining: limit - 1 };
+  }
+
+  if (usage.count >= limit) {
+    return { allowed: false, limit, remaining: 0 };
+  }
+
+  usage.count++;
+  return { allowed: true, limit, remaining: limit - usage.count };
+};
+
 export const protectB2BApi = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const tokenHeader = req.header('tokenId') || req.header('token');
@@ -41,6 +73,18 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
           return res.status(403).json({
             success: false,
             error: 'Your API access has been suspended. Please contact support.'
+          });
+        }
+
+        // Enforce Rate Limiting
+        const rateCheck = checkRateLimit(client);
+        res.setHeader('X-RateLimit-Limit', rateCheck.limit);
+        res.setHeader('X-RateLimit-Remaining', rateCheck.remaining);
+
+        if (!rateCheck.allowed) {
+          return res.status(429).json({
+            success: false,
+            error: `Rate limit exceeded. Partner quota is ${rateCheck.limit} req/min. Please throttle your requests.`
           });
         }
 
@@ -102,6 +146,18 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
           error: `IP address ${clientIp} is not whitelisted for this API key.`
         });
       }
+    }
+
+    // Enforce Rate Limiting
+    const rateCheck = checkRateLimit(client);
+    res.setHeader('X-RateLimit-Limit', rateCheck.limit);
+    res.setHeader('X-RateLimit-Remaining', rateCheck.remaining);
+
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        success: false,
+        error: `Rate limit exceeded. Partner quota is ${rateCheck.limit} req/min. Please throttle your requests.`
+      });
     }
 
     // Attach to request

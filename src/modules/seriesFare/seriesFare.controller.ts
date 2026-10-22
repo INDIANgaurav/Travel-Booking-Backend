@@ -25,10 +25,12 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       realtimeBook,
       status,
       segments,
+      isTestFlight,
     } = req.body;
 
     // Generate a unique ID using timestamp and random number to avoid duplicate key errors
     const sfId = `SF${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
+    const isTest = isTestFlight === true || isTestFlight === 'true';
 
     const seriesFare = await SeriesFare.create({
       supplierId: req.user?._id,
@@ -48,11 +50,12 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       adtFare: Number(adtFare),
       chdFare: Number(chdFare || 0),
       infFare: Number(infFare || 0),
-      totalSeats: Number(totalSeats || 10),
-      availableSeats: Number(availableSeats !== undefined ? availableSeats : totalSeats || 10),
+      totalSeats: Number(totalSeats || (isTest ? 999 : 10)),
+      availableSeats: Number(availableSeats !== undefined && availableSeats !== '' ? availableSeats : (totalSeats || (isTest ? 999 : 10))),
       realtimeBook: realtimeBook !== undefined ? realtimeBook : true,
       status: status || 'Active',
       segments: segments || [],
+      isTestFlight: isTest,
     });
 
     res.status(201).json(seriesFare);
@@ -63,7 +66,7 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
 
 export const getSeriesFares = async (req: AuthRequest, res: Response) => {
   try {
-    const { origin, destination, date, airline, status } = req.query;
+    const { origin, destination, date, airline, status, isTestFlight } = req.query;
     const filter: any = { isArchived: { $ne: true } };
 
     // Strict Data Isolation: ID-based linking
@@ -75,6 +78,9 @@ export const getSeriesFares = async (req: AuthRequest, res: Response) => {
     if (destination) filter.destination = (destination as string).toUpperCase();
     if (airline) filter.airline = new RegExp(airline as string, 'i');
     if (status) filter.status = status;
+    if (isTestFlight !== undefined && isTestFlight !== '' && isTestFlight !== 'All') {
+      filter.isTestFlight = isTestFlight === 'true';
+    }
 
     if (date) {
       const searchDate = new Date(date as string);

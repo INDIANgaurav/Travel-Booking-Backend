@@ -11,6 +11,7 @@ export interface IB2BClient extends Document {
   testApiKey: string;
   liveApiKey: string;
   status: 'Pending' | 'Testing' | 'Live' | 'Suspended';
+  isVerified?: boolean;
   apiWalletBalance: number;
   webhookUrl?: string;
   allowedIPs: string[];
@@ -36,6 +37,7 @@ const b2bClientSchema = new Schema<IB2BClient>(
       enum: ['Pending', 'Testing', 'Live', 'Suspended'], 
       default: 'Testing' 
     },
+    isVerified: { type: Boolean, default: false },
     apiWalletBalance: { type: Number, default: 0 },
     webhookUrl: { type: String },
     allowedIPs: [{ type: String }],
