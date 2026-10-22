@@ -8,6 +8,7 @@ export interface IBooking extends Document {
   idempotencyKey?: string;
   totalAmount: number;
   date: string;
+  isTestBooking?: boolean;
   bookingMode: 'PERSONAL' | 'MYBIZ';
   paymentMethod?: 'RAZORPAY' | 'WALLET';  
   razorpayOrderId?: string;
@@ -72,6 +73,7 @@ const bookingSchema = new Schema<IBooking>(
     status: { type: String, enum: ['INITIATED', 'PAYMENT_PENDING', 'TICKETING_IN_PROGRESS', 'CONFIRMED', 'FAILED_REFUNDING', 'FAILED', 'CANCEL_PENDING', 'PARTIALLY_CANCELLED', 'CANCELLED'], default: 'INITIATED' },
     idempotencyKey: { type: String, sparse: true, unique: true },
     bookingMode: { type: String, enum: ['PERSONAL', 'MYBIZ'], default: 'PERSONAL' },
+    isTestBooking: { type: Boolean, default: false, index: true },
     paymentMethod: { type: String, enum: ['RAZORPAY', 'WALLET'], default: 'RAZORPAY' },
     totalAmount: { type: Number, required: true },
     promoCodeApplied: { type: String, default: null },

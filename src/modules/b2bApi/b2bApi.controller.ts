@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import SeriesFare from '../seriesFare/seriesFare.model';
 import B2BClient from './b2bClient.model';
+import Booking from '../bookings/booking.model';
+import User from '../users/user.model';
 
 export const authenticateB2BClient = async (req: Request, res: Response) => {
   try {
@@ -252,47 +254,93 @@ export const bookFlight = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Not enough seats available' });
     }
 
-    const totalFare = flight.adtFare * passengers.length;
+    const markup = req.b2bClient.markupPercentage || 0;
+    const unitFare = flight.adtFare + (flight.adtFare * (markup / 100));
+    const totalFare = unitFare * passengers.length;
 
-    if (req.isLiveMode) {
+    // Check Live balance if in live mode
+    if (isLive) {
       if (req.b2bClient.apiWalletBalance < totalFare) {
         return res.status(402).json({ success: false, error: 'Insufficient API Wallet Balance. Please recharge.' });
       }
-
-      // 1. Deduct Balance
       req.b2bClient.apiWalletBalance -= totalFare;
       await req.b2bClient.save();
+    }
 
-      // 2. Deduct Seats
-      flight.availableSeats -= passengers.length;
-      if (flight.availableSeats === 0) flight.status = 'SoldOut';
-      await flight.save();
+    // Deduct seats and update inventory
+    flight.availableSeats = Math.max(0, flight.availableSeats - passengers.length);
+    if (flight.availableSeats === 0) {
+      flight.status = 'SoldOut';
+    }
+    await flight.save();
 
-      // 3. Generate PNR
-      const pnr = `TC${Math.floor(100000 + Math.random() * 900000)}`;
-
-      return res.json({
-        success: true,
-        data: {
-          pnr,
-          status: 'CONFIRMED',
-          totalAmountDeducted: totalFare,
-          passengers
-        }
-      });
-
-    } else {
-      // Test Mode (No seat deduction, no wallet deduction)
-      return res.json({
-        success: true,
-        data: {
-          pnr: `TEST-${Math.floor(100000 + Math.random() * 900000)}`,
-          status: 'TEST_CONFIRMED',
-          message: 'Booking successful in TEST mode. No seats or balance deducted.',
-          passengers
-        }
+    // Find or create a User account for the partner so bookings appear on the Admin Dashboard
+    let partnerUser = await User.findOne({ email: req.b2bClient.email });
+    if (!partnerUser) {
+      partnerUser = await User.create({
+        name: req.b2bClient.companyName || 'B2B Partner',
+        email: req.b2bClient.email,
+        password: 'B2B_PARTNER_API_MANAGED_' + Math.random().toString(36).slice(-8),
+        roles: ['AGENT'],
+        isVerified: true
       });
     }
+
+    // Generate PNR and Booking ID
+    const pnr = `TC${Math.floor(100000 + Math.random() * 900000)}`;
+    const bookingId = `BK-B2B-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    // Create the actual Booking in the database
+    const newBooking = await Booking.create({
+      user: partnerUser._id,
+      bookingId,
+      type: 'FLIGHT',
+      status: 'CONFIRMED',
+      bookingMode: 'MYBIZ',
+      paymentMethod: 'WALLET',
+      isTestBooking: !isLive,
+      totalAmount: totalFare,
+      date: new Date().toISOString().split('T')[0],
+      details: {
+        airline: flight.airline,
+        flightNo: flight.flightNo,
+        from: flight.origin,
+        to: flight.destination,
+        pnr: pnr,
+        isSeriesFare: true,
+        isTestBooking: !isLive,
+        flightId: flight._id,
+        passengers: passengers.map((p: any) => ({
+          name: `${p.title ? p.title + ' ' : ''}${p.firstName || ''} ${p.lastName || ''}`.trim(),
+          gender: p.gender || 'Male',
+          type: p.type || 'ADULT',
+          status: 'CONFIRMED'
+        }))
+      }
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        pnr,
+        bookingId: newBooking.bookingId,
+        status: 'CONFIRMED',
+        message: 'Flight booked successfully.',
+        flight: {
+          sfId: flight.sfId,
+          airline: flight.airline,
+          flightNo: flight.flightNo,
+          origin: flight.origin,
+          destination: flight.destination,
+          travelDate: flight.travelDate,
+          departureTime: flight.departureTime,
+          arrivalTime: flight.arrivalTime,
+          remainingSeats: flight.availableSeats,
+          totalFare
+        },
+        passengers
+      }
+    });
 
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

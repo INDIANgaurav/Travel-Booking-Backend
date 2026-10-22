@@ -66,7 +66,7 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
 
 export const getSeriesFares = async (req: AuthRequest, res: Response) => {
   try {
-    const { origin, destination, date, airline, status, isTestFlight } = req.query;
+    const { origin, destination, date, airline, status, isTestFlight, page, limit, search } = req.query;
     const filter: any = { isArchived: { $ne: true } };
 
     // Strict Data Isolation: ID-based linking
@@ -82,11 +82,38 @@ export const getSeriesFares = async (req: AuthRequest, res: Response) => {
       filter.isTestFlight = isTestFlight === 'true';
     }
 
+    if (search) {
+      const searchRegex = new RegExp(search as string, 'i');
+      filter.$or = [
+        { sfId: searchRegex },
+        { airlinePnr: searchRegex },
+        { flightNo: searchRegex },
+        { origin: searchRegex },
+        { destination: searchRegex }
+      ];
+    }
+
     if (date) {
       const searchDate = new Date(date as string);
       const startOfDay = new Date(searchDate.setHours(0, 0, 0, 0));
       const endOfDay = new Date(searchDate.setHours(23, 59, 59, 999));
       filter.travelDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    if (page && limit) {
+      const pageNum = parseInt(page as string) || 1;
+      const limitNum = parseInt(limit as string) || 15;
+      const skip = (pageNum - 1) * limitNum;
+      const total = await SeriesFare.countDocuments(filter);
+      const fares = await SeriesFare.find(filter).sort({ travelDate: 1, adtFare: 1 }).skip(skip).limit(limitNum).lean();
+      return res.json({
+        success: true,
+        data: fares,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+        currentPage: pageNum,
+        limit: limitNum
+      });
     }
 
     const fares = await SeriesFare.find(filter).sort({ travelDate: 1, adtFare: 1 }).lean();
