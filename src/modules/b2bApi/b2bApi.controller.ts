@@ -309,6 +309,9 @@ export const bookFlight = async (req: Request, res: Response) => {
         pnr: pnr,
         isSeriesFare: true,
         isTestBooking: !isLive,
+        b2bClientId: req.b2bClient._id,
+        b2bCompanyName: req.b2bClient.companyName,
+        b2bUsername: req.b2bClient.username,
         flightId: flight._id,
         passengers: passengers.map((p: any) => ({
           name: `${p.title ? p.title + ' ' : ''}${p.firstName || ''} ${p.lastName || ''}`.trim(),

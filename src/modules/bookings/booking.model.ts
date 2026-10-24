@@ -38,6 +38,10 @@ export interface IBooking extends Document {
     isGapiFare?: boolean;
     isSeriesFare?: boolean;
     isAirIqFare?: boolean;
+    isTestBooking?: boolean;
+    b2bClientId?: mongoose.Types.ObjectId | string;
+    b2bCompanyName?: string;
+    b2bUsername?: string;
     resultSessionId?: string;
     searchSessionId?: string;
     txid?: string;
@@ -149,6 +153,7 @@ bookingSchema.index({ user: 1, createdAt: -1 });
 bookingSchema.index({ status: 1 });
 bookingSchema.index({ type: 1 });
 bookingSchema.index({ 'details.pnr': 1 });
+bookingSchema.index({ 'details.b2bClientId': 1 });
 bookingSchema.index({ 'details.flight_keys': 1 });
 bookingSchema.index({ createdAt: -1 });
 

@@ -1,5 +1,5 @@
 import express from 'express';
-import { createB2BClient, getB2BClients, updateB2BClient, deleteB2BClient } from './b2bAdmin.controller';
+import { createB2BClient, getB2BClients, updateB2BClient, deleteB2BClient, getB2BClientBookings } from './b2bAdmin.controller';
 import { protect } from '../../middleware/auth.middleware';
 import { authorizeRoles } from '../../middleware/rbac.middleware';
 
@@ -16,5 +16,6 @@ router.route('/:id')
   .put(updateB2BClient)
   .delete(deleteB2BClient);
 
+router.get('/:id/bookings', getB2BClientBookings);
 
 export default router;
