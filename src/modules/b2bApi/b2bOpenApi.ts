@@ -703,7 +703,7 @@ Includes automated JWT extraction, Idempotency-Key generation, and CAS flight bo
       { key: 'username', value: username, type: 'string' },
       { key: 'password', value: password, type: 'string' },
       { key: 'tokenId', value: '', type: 'string' },
-      { key: 'activeSfId', value: 'TC-TEST-SEAT1', type: 'string' }
+      { key: 'activeSfId', value: 'TC-DOM-DIR', type: 'string' }
     ],
     item: [
       {
@@ -837,11 +837,35 @@ Includes automated JWT extraction, Idempotency-Key generation, and CAS flight bo
                 passengers: [
                   {
                     title: 'Mr',
-                    firstName: 'Vikram',
-                    lastName: 'Malhotra',
+                    firstName: 'Rohan',
+                    lastName: 'Sharma',
                     gender: 'Male',
                     type: 'ADULT',
-                    dob: '1990-08-14'
+                    dob: '1990-05-15'
+                  },
+                  {
+                    title: 'Mrs',
+                    firstName: 'Priya',
+                    lastName: 'Sharma',
+                    gender: 'Female',
+                    type: 'ADULT',
+                    dob: '1992-08-22'
+                  },
+                  {
+                    title: 'Mstr',
+                    firstName: 'Aarav',
+                    lastName: 'Sharma',
+                    gender: 'Male',
+                    type: 'CHILD',
+                    dob: '2018-03-10'
+                  },
+                  {
+                    title: 'Miss',
+                    firstName: 'Anaya',
+                    lastName: 'Sharma',
+                    gender: 'Female',
+                    type: 'INFANT',
+                    dob: '2025-06-14'
                   }
                 ],
                 contactDetails: {
