@@ -42,10 +42,29 @@ build/
 # Firebase credentials
 firebase-service-account.json
 
-# Confidential Documentation & API specs
+# Confidential Documentation, Postman Collections & API specs
 docs/
 *.doc
 *.docx
 *.pdf
-
+*.postman_collection.json
+*.postman_environment.json
+TRIPPECHALO_*
 optimization_log.md
+
+# Scripts, Temporary & Scratch Files
+scripts/
+temp/
+tmp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.sh
+*.bat
+*.ps1
+*.py
+test-*.js
+test-*.ts
+seed-*.js
+seed-*.ts
