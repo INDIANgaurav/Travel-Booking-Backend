@@ -404,7 +404,7 @@ export const searchFlights = async (req: Request, res: Response) => {
     endOfDay.setUTCHours(23, 59, 59, 999);
 
     const isLive = Boolean(req.isLiveMode);
-    const requiredSeats = adults + children; // Infants do not take physical seats
+    const requiredSeats = adults + children + infants; // Every passenger including infant is allocated an individual seat
 
     const flightQuery: any = {
       status: 'Active',
@@ -591,7 +591,7 @@ export const bookFlight = async (req: Request, res: Response) => {
       return sendB2BError(res, 422, 'INFANT_COUNT_EXCEEDED', 'Number of infants cannot exceed the number of adult passengers.');
     }
 
-    const seatsRequired = adultCount + childCount; // Infants travel on adult lap without consuming physical seats
+    const seatsRequired = adultCount + childCount + infantCount; // Every passenger including infant gets a dedicated seat allocated
     const isLive = Boolean(req.isLiveMode);
 
     // 4. Fetch Flight
