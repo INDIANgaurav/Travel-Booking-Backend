@@ -9,7 +9,7 @@ import { createAdminNotification } from '../notifications/notification.controlle
 
 const generateAccessToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
-    expiresIn: '7d',
+    expiresIn: '15m',
   });
 };
 
@@ -42,6 +42,7 @@ const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
     agentStatus: user.agentStatus,
     avatar: user.avatar,
     token: accessToken,
+    refreshToken: refreshToken,
   });
 };
 
@@ -441,7 +442,10 @@ export const verifyRegistration = async (req: Request, res: Response) => {
 };
 export const refreshAccessToken = async (req: Request, res: Response) => {
   try {
-    const refreshToken = req.cookies?.jwt;
+    const refreshToken = 
+      req.cookies?.jwt || 
+      req.body?.refreshToken || 
+      req.header('x-refresh-token');
     
     if (!refreshToken) {
       return res.status(401).json({ message: 'Not authorized, no refresh token' });
@@ -460,7 +464,20 @@ export const refreshAccessToken = async (req: Request, res: Response) => {
       }
 
       const accessToken = generateAccessToken(user.id);
-      res.json({ token: accessToken });
+      const newRefreshToken = generateRefreshToken(user.id);
+      const isProduction = process.env.NODE_ENV === 'production';
+
+      res.cookie('jwt', newRefreshToken, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      });
+
+      res.json({ 
+        token: accessToken,
+        refreshToken: newRefreshToken,
+      });
     } catch (err) {
       return res.status(401).json({ message: 'Not authorized, refresh token failed' });
     }
