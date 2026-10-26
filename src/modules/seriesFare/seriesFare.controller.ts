@@ -66,7 +66,7 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
 
 export const getSeriesFares = async (req: AuthRequest, res: Response) => {
   try {
-    const { origin, destination, date, airline, status, isTestFlight, page, limit, search } = req.query;
+    const { origin, destination, date, airline, status, isTestFlight, page, limit, search, supplierName, bookingType } = req.query;
     const filter: any = { isArchived: { $ne: true } };
 
     // Strict Data Isolation: ID-based linking
@@ -77,9 +77,15 @@ export const getSeriesFares = async (req: AuthRequest, res: Response) => {
     if (origin) filter.origin = (origin as string).toUpperCase();
     if (destination) filter.destination = (destination as string).toUpperCase();
     if (airline) filter.airline = new RegExp(airline as string, 'i');
-    if (status) filter.status = status;
+    if (status && status !== 'All') filter.status = new RegExp(`^${status}$`, 'i');
+    if (supplierName && supplierName !== 'All') filter.supplierName = new RegExp(supplierName as string, 'i');
+    if (bookingType && bookingType !== 'All') filter.bookingType = bookingType;
     if (isTestFlight !== undefined && isTestFlight !== '' && isTestFlight !== 'All') {
-      filter.isTestFlight = isTestFlight === 'true';
+      if (isTestFlight === 'true') {
+        filter.isTestFlight = true;
+      } else {
+        filter.isTestFlight = { $ne: true };
+      }
     }
 
     if (search) {
