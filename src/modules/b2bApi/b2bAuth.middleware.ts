@@ -25,23 +25,24 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-const checkRateLimit = (client: any): { allowed: boolean; limit: number; remaining: number } => {
+const checkRateLimit = (client: any): { allowed: boolean; limit: number; remaining: number; resetTime: number } => {
   const clientId = client._id.toString();
   const limit = client.rateLimitPerMinute || 60;
   const now = Date.now();
 
   const usage = rateLimitMap.get(clientId);
   if (!usage || now > usage.resetTime) {
-    rateLimitMap.set(clientId, { count: 1, resetTime: now + 60000 });
-    return { allowed: true, limit, remaining: limit - 1 };
+    const resetTime = now + 60000;
+    rateLimitMap.set(clientId, { count: 1, resetTime });
+    return { allowed: true, limit, remaining: limit - 1, resetTime };
   }
 
   if (usage.count >= limit) {
-    return { allowed: false, limit, remaining: 0 };
+    return { allowed: false, limit, remaining: 0, resetTime: usage.resetTime };
   }
 
   usage.count++;
-  return { allowed: true, limit, remaining: limit - usage.count };
+  return { allowed: true, limit, remaining: limit - usage.count, resetTime: usage.resetTime };
 };
 
 export const protectB2BApi = async (req: Request, res: Response, next: NextFunction) => {
@@ -59,6 +60,21 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
       token = token.replace(/Bearer\s+/gi, '').replace(/^["']|["']$/g, '').trim();
     }
 
+    // Helper for error envelope
+    const sendAuthError = (status: number, code: string, message: string) => {
+      return res.status(status).json({
+        success: false,
+        statusCode: status,
+        error: {
+          code,
+          message
+        },
+        meta: {
+          timestamp: new Date().toISOString()
+        }
+      });
+    };
+
     // CASE A: Token provided (GAPI / OAuth Bearer Standard)
     if (token) {
       const secret = process.env.JWT_SECRET || 'trippechalo_jwt_super_secret_key_2026';
@@ -67,49 +83,52 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
         const client = await B2BClient.findById(decoded.clientId);
 
         if (!client) {
-          return res.status(401).json({
-            success: false,
-            error: 'Invalid session token. Client record not found.'
-          });
+          return sendAuthError(401, 'UNAUTHORIZED', 'Invalid session token. Client record not found.');
         }
 
         if (client.status === 'Suspended') {
-          return res.status(403).json({
-            success: false,
-            error: 'Your API access has been suspended. Please contact support.'
-          });
+          return sendAuthError(403, 'ACCOUNT_SUSPENDED', 'Your API access has been suspended. Please contact technical support.');
         }
 
         // Enforce Rate Limiting
         const rateCheck = checkRateLimit(client);
         res.setHeader('X-RateLimit-Limit', rateCheck.limit);
-        res.setHeader('X-RateLimit-Remaining', rateCheck.remaining);
+        res.setHeader('X-RateLimit-Remaining', Math.max(0, rateCheck.remaining));
+        res.setHeader('X-RateLimit-Reset', Math.ceil(rateCheck.resetTime / 1000));
 
         if (!rateCheck.allowed) {
+          const retryAfterSec = Math.max(1, Math.ceil((rateCheck.resetTime - Date.now()) / 1000));
+          res.setHeader('Retry-After', retryAfterSec);
           return res.status(429).json({
             success: false,
-            error: `Rate limit exceeded. Partner quota is ${rateCheck.limit} req/min. Please throttle your requests.`
+            statusCode: 429,
+            error: {
+              code: 'RATE_LIMIT_EXCEEDED',
+              message: `Rate limit of ${rateCheck.limit} req/min exceeded. Please throttle your requests and retry after ${retryAfterSec}s.`,
+              details: [{ limit: rateCheck.limit, retryAfterSeconds: retryAfterSec }]
+            },
+            meta: {
+              timestamp: new Date().toISOString()
+            }
           });
         }
 
         req.b2bClient = client;
-        req.isLiveMode = decoded.isLive;
+        req.isLiveMode = Boolean(decoded.isLive);
         return next();
       } catch (err: any) {
-        return res.status(401).json({
-          success: false,
-          error: `Session token invalid (${err.message}). Please re-authenticate via /oauth2/tokens`
-        });
+        return sendAuthError(401, 'INVALID_TOKEN', `Session token invalid (${err.message}). Please re-authenticate via /oauth2/tokens`);
       }
     }
 
     // CASE B: Direct API Key provided
     const apiKey = apiKeyHeader;
     if (!apiKey) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required. Please provide "tokenId" or "Authorization: Bearer <token>" in headers, or "x-api-key".'
-      });
+      return sendAuthError(
+        401,
+        'UNAUTHORIZED',
+        'Authentication required. Please provide "Authorization: Bearer <token>" or "x-api-key" in headers.'
+      );
     }
 
     // Look for the key in either test or live fields
@@ -118,49 +137,52 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
     });
 
     if (!client) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid API Key.'
-      });
+      return sendAuthError(401, 'INVALID_API_KEY', 'The provided API Key is invalid or not registered.');
     }
 
     if (client.status === 'Suspended') {
-      return res.status(403).json({
-        success: false,
-        error: 'Your API access has been suspended. Please contact support.'
-      });
+      return sendAuthError(403, 'ACCOUNT_SUSPENDED', 'Your API access has been suspended. Please contact technical support.');
     }
 
     const isLive = client.liveApiKey === apiKey;
 
     // If they use a live key but their status is not live yet
     if (isLive && client.status !== 'Live') {
-      return res.status(403).json({
-        success: false,
-        error: 'Your account is not approved for LIVE mode yet. Please use your test key.'
-      });
+      return sendAuthError(
+        403,
+        'SANDBOX_ONLY',
+        'Your account is in Testing status. Please use your Sandbox API key or contact support for live activation.'
+      );
     }
 
-    // IP Whitelisting Check (Optional extra security)
+    // IP Whitelisting Check
     const clientIp = req.ip || req.connection.remoteAddress;
     if (client.allowedIPs && client.allowedIPs.length > 0 && clientIp) {
       if (!client.allowedIPs.includes(clientIp)) {
-        return res.status(403).json({
-          success: false,
-          error: `IP address ${clientIp} is not whitelisted for this API key.`
-        });
+        return sendAuthError(403, 'IP_NOT_WHITELISTED', `IP address ${clientIp} is not whitelisted for this API key.`);
       }
     }
 
     // Enforce Rate Limiting
     const rateCheck = checkRateLimit(client);
     res.setHeader('X-RateLimit-Limit', rateCheck.limit);
-    res.setHeader('X-RateLimit-Remaining', rateCheck.remaining);
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, rateCheck.remaining));
+    res.setHeader('X-RateLimit-Reset', Math.ceil(rateCheck.resetTime / 1000));
 
     if (!rateCheck.allowed) {
+      const retryAfterSec = Math.max(1, Math.ceil((rateCheck.resetTime - Date.now()) / 1000));
+      res.setHeader('Retry-After', retryAfterSec);
       return res.status(429).json({
         success: false,
-        error: `Rate limit exceeded. Partner quota is ${rateCheck.limit} req/min. Please throttle your requests.`
+        statusCode: 429,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: `Rate limit of ${rateCheck.limit} req/min exceeded. Please throttle your requests and retry after ${retryAfterSec}s.`,
+          details: [{ limit: rateCheck.limit, retryAfterSeconds: retryAfterSec }]
+        },
+        meta: {
+          timestamp: new Date().toISOString()
+        }
       });
     }
 
@@ -169,8 +191,18 @@ export const protectB2BApi = async (req: Request, res: Response, next: NextFunct
     req.isLiveMode = isLive;
 
     next();
-  } catch (error) {
+  } catch (error: any) {
     console.error('B2B Auth Error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error during Authentication' });
+    res.status(500).json({
+      success: false,
+      statusCode: 500,
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message || 'Internal Server Error during Authentication'
+      },
+      meta: {
+        timestamp: new Date().toISOString()
+      }
+    });
   }
 };

@@ -27,9 +27,12 @@ export interface IBooking extends Document {
 
   details: {
     airline?: string;
+    flightNo?: string;
     from?: string;
     to?: string;
     destination?: string;
+    clientBookingRef?: string;
+    idempotencyKey?: string;
     passengers?: Array<{ name: string; gender: string; type: string; dob?: string; passportNum?: string; passportExpiry?: string; nationality?: string; status?: 'CONFIRMED' | 'CANCEL_PENDING' | 'CANCELLED' }>;
     contactDetails?: { email: string; phone: string; countryCode: string };
     seats?: string[];
