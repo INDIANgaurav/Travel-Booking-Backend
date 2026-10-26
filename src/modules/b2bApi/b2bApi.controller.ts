@@ -297,10 +297,15 @@ export const bookFlight = async (req: Request, res: Response) => {
     const destCode = (flight.destination || '').trim().toUpperCase();
     const isInternational = !indianAirports.has(originCode) || !indianAirports.has(destCode);
 
-    // Generate PNR with TESTDOM (Domestic) or TESTINT (International) prefix
-    const pnrPrefix = isInternational ? 'TESTINT' : 'TESTDOM';
-    const pnrNumber = Math.floor(100000 + Math.random() * 900000);
-    const pnr = `${pnrPrefix}${pnrNumber}`;
+    // Generate PNR: TESTDOM / TESTINT for Sandbox, and real Airline PNR for Live Production
+    let pnr = '';
+    if (!isLive) {
+      const pnrPrefix = isInternational ? 'TESTINT' : 'TESTDOM';
+      const pnrNumber = Math.floor(100000 + Math.random() * 900000);
+      pnr = `${pnrPrefix}${pnrNumber}`;
+    } else {
+      pnr = flight.airlinePnr || `TC${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    }
     const bookingId = `BK-B2B-${Math.floor(100000 + Math.random() * 900000)}`;
 
     // Create the actual Booking in the database
