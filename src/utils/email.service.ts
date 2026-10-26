@@ -16,7 +16,7 @@ interface EmailAttachment {
   content: string | Buffer; // Base64 string for Brevo, Buffer for Nodemailer
 }
 
-const sendEmail = async (to: string, subject: string, htmlContent: string, senderName: string = "TrippeChalo", attachments?: EmailAttachment[]) => {
+const sendEmail = async (to: string, subject: string, htmlContent: string, senderName: string = "TrippeChalo India", attachments?: EmailAttachment[]) => {
   if (!process.env.BREVO_API_KEY && (!process.env.EMAIL_USER || !process.env.EMAIL_PASS)) {
     console.warn('⚠️ Neither BREVO_API_KEY nor (EMAIL_USER + EMAIL_PASS) are set in .env. Skipping actual email send.');
     console.log(`[Simulated Email] To: ${to}, Subject: ${subject}`);
@@ -89,7 +89,7 @@ const getBaseTemplate = (title: string, subtitle: string, bodyContent: string, m
   <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: ${maxWidth}px; margin: 0 auto; padding: 0; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.05); border: 1px solid #f0f0f0;">
     <div style="background: #1a3673; padding: 30px 20px; text-align: center;">
       <h1 style="margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 0.5px; display: inline-flex; align-items: center; justify-content: center; gap: 8px;">
-        <span style="color: #ffffff;">Trippe</span><span style="color: #60a5fa;">Chalo</span>
+        <span style="color: #ffffff;">Trippe</span><span style="color: #60a5fa;">Chalo</span> <span style="color: #fb923c; font-size: 16px; margin-left: 4px; background: rgba(251, 146, 60, 0.2); padding: 2px 8px; border-radius: 6px; letter-spacing: 1px;">INDIA</span>
       </h1>
       <p style="color: #a3b8e8; margin: 8px 0 0 0; font-size: 14px;">${subtitle}</p>
     </div>
@@ -114,27 +114,27 @@ export const sendOTP = async (to: string, otp: string, expiryMinutes: number) =>
     <p style="color: #64748b; font-size: 14px; margin: 0; text-align: center;">This code will expire in <strong style="color: #ef4444;">${expiryMinutes} minutes</strong>.</p>
     <p style="color: #64748b; font-size: 14px; margin: 10px 0 0 0; text-align: center;">Please do not share this code with anyone for your security.</p>
   `;
-  await sendEmail(to, 'Your TrippeChalo Verification Code', getBaseTemplate('TrippeChalo', 'Secure Verification', body), "TrippeChalo Security");
+  await sendEmail(to, 'Your TrippeChalo India Verification Code', getBaseTemplate('TrippeChalo India', 'Secure Verification', body), "TrippeChalo India Security");
 };
 
 export const sendWelcomeEmail = async (to: string, name: string) => {
   const body = `
     <p style="color: #334155; font-size: 16px; margin: 0 0 10px 0; font-weight: 500;">Dear ${name},</p>
-    <p style="color: #64748b; font-size: 15px; margin: 0 0 25px 0; line-height: 1.5;">Welcome to TrippeChalo B2B Portal! Your registration has been received successfully.</p>
+    <p style="color: #64748b; font-size: 15px; margin: 0 0 25px 0; line-height: 1.5;">Welcome to TrippeChalo India B2B Portal! Your registration has been received successfully.</p>
     <p style="color: #64748b; font-size: 15px; margin: 0 0 25px 0; line-height: 1.5;">Our team will review your application and approve it shortly. Once approved, you will have full access to our B2B travel inventory.</p>
-    <p style="color: #64748b; font-size: 15px; margin: 0 0 10px 0; line-height: 1.5;">Thank you for partnering with us.</p>
+    <p style="color: #64748b; font-size: 15px; margin: 0 10px 0; line-height: 1.5;">Thank you for partnering with us.</p>
   `;
-  await sendEmail(to, 'Welcome to TrippeChalo', getBaseTemplate('TrippeChalo', 'Registration Successful', body));
+  await sendEmail(to, 'Welcome to TrippeChalo India', getBaseTemplate('TrippeChalo India', 'Registration Successful', body));
 };
 
 export const sendAccountApprovedEmail = async (to: string, name: string) => {
   const body = `
     <p style="color: #334155; font-size: 16px; margin: 0 0 10px 0; font-weight: 500;">Dear ${name},</p>
-    <p style="color: #64748b; font-size: 15px; margin: 0 0 25px 0; line-height: 1.5;">Great news! Your TrippeChalo agent account has been <strong>Approved</strong>.</p>
+    <p style="color: #64748b; font-size: 15px; margin: 0 0 25px 0; line-height: 1.5;">Great news! Your TrippeChalo India agent account has been <strong>Approved</strong>.</p>
     <p style="color: #64748b; font-size: 15px; margin: 0 0 25px 0; line-height: 1.5;">You can now log in to the portal, add funds to your wallet, and start booking flights at exclusive B2B rates.</p>
     <a href="https://trippechalo.com/login" style="display: block; width: 200px; margin: 0 auto; background-color: #2563eb; color: #fff; text-align: center; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold;">Login Now</a>
   `;
-  await sendEmail(to, 'Account Approved - TrippeChalo', getBaseTemplate('TrippeChalo', 'Account Approved', body));
+  await sendEmail(to, 'Account Approved - TrippeChalo India', getBaseTemplate('TrippeChalo India', 'Account Approved', body));
 };
 
 export const sendWalletTopupEmail = async (to: string, name: string, amount: number, newBalance: number, reference: string) => {
@@ -148,7 +148,7 @@ export const sendWalletTopupEmail = async (to: string, name: string, amount: num
     </div>
     <p style="color: #64748b; font-size: 15px; margin: 0; line-height: 1.5;">You can now use this balance to book flights and hotels seamlessly.</p>
   `;
-  await sendEmail(to, 'Wallet Top-up Successful', getBaseTemplate('TrippeChalo', 'Wallet Top-up Success', body), "TrippeChalo Finance");
+  await sendEmail(to, 'Wallet Top-up Successful', getBaseTemplate('TrippeChalo India', 'Wallet Top-up Success', body), "TrippeChalo India Finance");
 };
 
 const generatePDFTicket = async (booking: any, agentName: string): Promise<Buffer> => {
@@ -201,7 +201,7 @@ const generatePDFTicket = async (booking: any, agentName: string): Promise<Buffe
           <div>
             <h2 class="text-3xl font-black text-[#0b1031] tracking-tight flex items-center gap-2 mb-1">
               <span class="text-blue-600 font-sans">✈</span>
-              <span>Trippe<span class="text-blue-600">Chalo</span></span>
+              <span>Trippe<span class="text-blue-600">Chalo</span> <span class="text-xs bg-orange-500 text-white px-2 py-0.5 rounded font-black tracking-wider align-middle ml-1">INDIA</span></span>
             </h2>
             <p class="text-[11px] text-gray-500 font-medium tracking-widest uppercase">E-Ticket / Reservation Voucher</p>
           </div>
@@ -481,7 +481,7 @@ export const sendBookingConfirmationEmail = async (to: string, name: string, boo
       <p style="color: #94a3b8; font-size: 11px; margin-top: 15px; text-align: center;">You can access and print your confirmed E-Ticket or Tax Invoice anytime from your account dashboard.</p>
     </div>
   `;
-  await sendEmail(to, `Booking Confirmed: E-Ticket & Tax Invoice - PNR: ${pnr}`, getBaseTemplate('TrippeChalo', 'Booking Confirmation', body, 620), "TrippeChalo Bookings", attachments);
+  await sendEmail(to, `Booking Confirmed: E-Ticket & Tax Invoice - PNR: ${pnr}`, getBaseTemplate('TrippeChalo India', 'Booking Confirmation', body, 620), "TrippeChalo India Bookings", attachments);
 };
 
 export const sendCancellationEmail = async (to: string, name: string, pnr: string, refundAmount: number) => {
@@ -493,7 +493,7 @@ export const sendCancellationEmail = async (to: string, name: string, pnr: strin
       <p style="margin: 0 0 10px 0; font-size: 14px; color: #475569;"><strong>Status:</strong> Cancelled</p>
       <p style="margin: 0; font-size: 14px; color: #475569;"><strong>Refund Amount:</strong> <span style="color: #059669; font-weight: bold;">₹${refundAmount.toLocaleString('en-IN')}</span> (Credited to Wallet)</p>
     </div>
-    <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">The refund amount has been added to your TrippeChalo B2B wallet.</p>
+    <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">The refund amount has been added to your TrippeChalo India B2B wallet.</p>
   `;
-  await sendEmail(to, `Booking Cancelled - PNR: ${pnr}`, getBaseTemplate('TrippeChalo', 'Booking Cancellation', body), "TrippeChalo Support");
+  await sendEmail(to, `Booking Cancelled - PNR: ${pnr}`, getBaseTemplate('TrippeChalo India', 'Booking Cancellation', body), "TrippeChalo India Support");
 };
