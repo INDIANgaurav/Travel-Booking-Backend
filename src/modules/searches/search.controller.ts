@@ -310,10 +310,14 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     // Merge active Series Fares matching route
     try {
       const SeriesFare = require('../seriesFare/seriesFare.model').default;
-      const startOfDay = new Date(targetDate);
-      startOfDay.setUTCHours(0, 0, 0, 0);
-      const endOfDay = new Date(targetDate);
-      endOfDay.setUTCHours(23, 59, 59, 999);
+      
+      const dateStr = (targetDate instanceof Date && !isNaN(targetDate.getTime()))
+        ? targetDate.toISOString().split('T')[0]
+        : String(targetDate || '').split('T')[0];
+
+      const exactDayStart = new Date(`${dateStr}T00:00:00.000Z`);
+      const startOfDay = new Date(exactDayStart.getTime() - (6 * 3600 * 1000)); // covers IST midnight (18:30 UTC previous day)
+      const endOfDay = new Date(exactDayStart.getTime() + (26 * 3600 * 1000));  // covers full day and IST boundaries
 
       const paxCount = adultCount + childCount;
       const sfFilter: any = {
@@ -392,6 +396,14 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         // Final agentCommission to pass to booking is what Admin & Uploader earn from this sale
         const finalCommission = uploaderCommission + adminCommission;
 
+        let arrivalDateStr = dateStr;
+        if (arrDateObj < depDateObj) {
+          const nextDay = new Date(dateStr);
+          nextDay.setDate(nextDay.getDate() + 1);
+          arrivalDateStr = nextDay.toISOString().split('T')[0];
+        }
+        const formattedArrivalTime = `${arrivalDateStr}T${sf.arrivalTime}:00`;
+
         return {
           _id: `SF_${sf._id}`,
           airline: sf.airline,
@@ -402,7 +414,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           arrivalCity: sf.destination,
           arrivalAirportCode: sf.destination,
           departureTime: depTime,
-          arrivalTime: arrDateObj.toISOString().slice(0, 19), // Save the calculated exact time
+          arrivalTime: formattedArrivalTime,
           durationMinutes: durationMinutes > 0 ? durationMinutes : 135, // Fallback if negative
           price: price, // Show exact base + commission without additional markup
           adultPrice: sf.adtFare + (finalCommission / (adultCount + childCount + infantCount)),
@@ -427,7 +439,12 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       });
 
       // Filter Series Fares based on active suppliers and CUG mappings for everyone
-      sfMapped = sfMapped.filter((f: any) => f.supplierObj && f.supplierObj.isActive && isFlightAllowedByCUG(f.supplierObj, f.airline));
+      sfMapped = sfMapped.filter((f: any) => {
+        if (f.supplierObj) {
+          return f.supplierObj.isActive && isFlightAllowedByCUG(f.supplierObj, f.airline);
+        }
+        return true;
+      });
 
       // Cleanup temporary object
       sfMapped = sfMapped.map((f: any) => {
