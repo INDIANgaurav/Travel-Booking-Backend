@@ -286,8 +286,21 @@ export const bookFlight = async (req: Request, res: Response) => {
       });
     }
 
-    // Generate PNR and Booking ID
-    const pnr = `TC${Math.floor(100000 + Math.random() * 900000)}`;
+    // Determine if sector is Domestic or International
+    const indianAirports = new Set([
+      'DEL', 'BOM', 'BLR', 'GOI', 'GOX', 'CCU', 'HYD', 'MAA', 'PNQ', 'AMD',
+      'JAI', 'ATQ', 'COK', 'CCJ', 'TRV', 'GAU', 'IXC', 'LKO', 'PAT', 'BBI',
+      'SXR', 'IXB', 'NAG', 'IDR', 'VTZ', 'IXR', 'BHO', 'UDR', 'VNS', 'DED',
+      'BDQ', 'RPR', 'TRZ', 'IXM', 'CNN', 'IXE', 'IMF', 'AJL', 'DMU', 'IXA'
+    ]);
+    const originCode = (flight.origin || '').trim().toUpperCase();
+    const destCode = (flight.destination || '').trim().toUpperCase();
+    const isInternational = !indianAirports.has(originCode) || !indianAirports.has(destCode);
+
+    // Generate PNR with TESTDOM (Domestic) or TESTINT (International) prefix
+    const pnrPrefix = isInternational ? 'TESTINT' : 'TESTDOM';
+    const pnrNumber = Math.floor(100000 + Math.random() * 900000);
+    const pnr = `${pnrPrefix}${pnrNumber}`;
     const bookingId = `BK-B2B-${Math.floor(100000 + Math.random() * 900000)}`;
 
     // Create the actual Booking in the database
@@ -329,6 +342,7 @@ export const bookFlight = async (req: Request, res: Response) => {
         bookingId: newBooking.bookingId,
         status: 'CONFIRMED',
         message: 'Flight booked successfully.',
+        totalFare,
         flight: {
           sfId: flight.sfId,
           airline: flight.airline,
@@ -337,11 +351,15 @@ export const bookFlight = async (req: Request, res: Response) => {
           destination: flight.destination,
           travelDate: flight.travelDate,
           departureTime: flight.departureTime,
-          arrivalTime: flight.arrivalTime,
-          remainingSeats: flight.availableSeats,
-          totalFare
+          arrivalTime: flight.arrivalTime
         },
-        passengers
+        passengers: passengers.map((p: any) => ({
+          title: p.title,
+          firstName: p.firstName,
+          lastName: p.lastName,
+          type: p.type,
+          gender: p.gender
+        }))
       }
     });
 
