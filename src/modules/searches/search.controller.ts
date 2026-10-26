@@ -864,14 +864,20 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
     console.log(`[CACHE MISS] Fetching fresh flights...`);
     const flights = await getFlightsData(req.query, isAgent, agentId);
     
-    // Save to cache
-    flightSearchCache.set(cacheKey, { data: flights, timestamp: Date.now() });
+    // Save to cache only when flights are found so empty results are never stuck
+    if (flights && flights.length > 0) {
+      flightSearchCache.set(cacheKey, { data: flights, timestamp: Date.now() });
+    }
 
     res.json(flights);
   } catch (error: any) {
     console.error("Flight Search Catch Error:", error);
     res.status(500).json({ message: error.message });
   }
+};
+
+export const clearFlightSearchCache = () => {
+  flightSearchCache.clear();
 };
 
 // @desc    Check Flight Availability

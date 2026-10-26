@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import SeriesFare from './seriesFare.model';
 import SeatHold from './seatHold.model';
 import { AuthRequest } from '../../middleware/auth.middleware';
+import { clearFlightSearchCache } from '../searches/search.controller';
 
 export const createSeriesFare = async (req: AuthRequest, res: Response) => {
   try {
@@ -58,6 +59,7 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       isTestFlight: isTest,
     });
 
+    clearFlightSearchCache();
     res.status(201).json(seriesFare);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -139,6 +141,7 @@ export const updateSeriesFare = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: 'Series fare record not found' });
     }
 
+    clearFlightSearchCache();
     res.json(seriesFare);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -149,6 +152,7 @@ export const deleteSeriesFare = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     await SeriesFare.findByIdAndDelete(id);
+    clearFlightSearchCache();
     res.json({ message: 'Series fare deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -754,6 +758,7 @@ export const bulkUpdateStatus = async (req: AuthRequest, res: Response) => {
       query.supplierId = req.user.roles?.includes('SUPPLIER_STAFF') ? req.user.supplierOwnerId : req.user._id;
     }
     await SeriesFare.updateMany(query, { $set: { status } });
+    clearFlightSearchCache();
     res.json({ message: 'Status updated successfully' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
