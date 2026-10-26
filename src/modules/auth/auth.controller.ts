@@ -9,25 +9,26 @@ import { createAdminNotification } from '../notifications/notification.controlle
 
 const generateAccessToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
-    expiresIn: '15m',
+    expiresIn: '7d',
   });
 };
 
 const generateRefreshToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
-    expiresIn: '7d',
+    expiresIn: '30d',
   });
 };
 
 const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
   const accessToken = generateAccessToken(user.id);
   const refreshToken = generateRefreshToken(user.id);
+  const isProduction = process.env.NODE_ENV === 'production';
 
   res.cookie('jwt', refreshToken, {
     httpOnly: true,
-    secure: true, // MUST be true for sameSite 'none'
-    sameSite: 'none', // Needed for cross-domain requests (Vercel -> Render)
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    secure: isProduction, // Only true in production HTTPS
+    sameSite: isProduction ? 'none' : 'lax', // 'lax' on localhost HTTP, 'none' on prod cross-origin
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 
   res.status(statusCode).json({
@@ -469,10 +470,11 @@ export const refreshAccessToken = async (req: Request, res: Response) => {
 };
 
 export const logoutUser = (req: Request, res: Response) => {
+  const isProduction = process.env.NODE_ENV === 'production';
   res.cookie('jwt', '', {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
     expires: new Date(0),
   });
   res.status(200).json({ message: 'Logged out successfully' });
