@@ -15,12 +15,16 @@ export const startCronJobs = () => {
         hold.status = 'EXPIRED';
         await hold.save();
         
-        // Return the seats back to inventory
+        // Return the seats back to inventory and ensure status is Active
         await SeriesFare.updateOne(
           { _id: hold.flightId },
-          { $inc: { availableSeats: hold.paxCount } }
+          { $inc: { availableSeats: hold.paxCount }, $set: { status: 'Active' } }
         );
         console.log(`Cron: Released ${hold.paxCount} seats for expired hold ${hold._id}`);
+      }
+      if (expiredHolds.length > 0) {
+        const { clearFlightSearchCache } = require('./modules/searches/search.controller');
+        clearFlightSearchCache();
       }
     } catch (error) {
       console.error('Error in SeatHold cleanup cron:', error);

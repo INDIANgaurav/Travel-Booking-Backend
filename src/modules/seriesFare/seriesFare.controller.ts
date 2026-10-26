@@ -929,6 +929,11 @@ export const holdSeats = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ message: 'Not enough seats available' });
     }
 
+    if (sf.availableSeats === 0) {
+      await SeriesFare.updateOne({ _id: sf._id }, { status: 'SoldOut' });
+    }
+    clearFlightSearchCache();
+
     // 10 minutes from now
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -964,8 +969,9 @@ export const releaseHoldSeats = async (req: AuthRequest, res: Response) => {
     if (hold) {
       hold.status = 'RELEASED';
       await hold.save();
-      // Atomically give the seats back
-      await SeriesFare.updateOne({ _id: id }, { $inc: { availableSeats: hold.paxCount } });
+      // Atomically give the seats back and restore status to Active
+      await SeriesFare.updateOne({ _id: id }, { $inc: { availableSeats: hold.paxCount }, $set: { status: 'Active' } });
+      clearFlightSearchCache();
       return res.json({ message: 'Seats released successfully' });
     }
 

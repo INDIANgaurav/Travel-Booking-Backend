@@ -3,6 +3,7 @@ import { bookFlight as bookFlightGapi } from '../flights/gapi.service';
 import { bookFlightAirIq } from '../flights/airiq.service';
 import SeriesFare from '../seriesFare/seriesFare.model';
 import mongoose from 'mongoose';
+import { clearFlightSearchCache } from '../searches/search.controller';
 
 /**
  * Unified Flight Booking Processor
@@ -119,12 +120,10 @@ export const executeFlightSupplierBooking = async (
       
       if (mongoose.Types.ObjectId.isValid(sfIdClean)) {
         const SeatHold = require('../seriesFare/seatHold.model').default;
+        const paxCount = details.passengers?.length || 1;
         const hold = await SeatHold.findOne({ userId, flightId: sfIdClean, status: 'ACTIVE' });
         
-        if (!hold || new Date() > hold.expiresAt) {
-           apiBookingFailed = true;
-           details.api_error = 'Seat hold expired or not found. Please hold the seats before booking.';
-        } else {
+        if (hold && new Date() <= hold.expiresAt) {
            hold.status = 'BOOKED';
            await hold.save();
            
@@ -137,7 +136,34 @@ export const executeFlightSupplierBooking = async (
               details.pnr = seriesFare.airlinePnr || 'PENDING';
               newStatus = 'CONFIRMED';
            }
+        } else {
+           // Fallback: Atomic Compare-And-Swap (CAS) direct seat reservation
+           // Protects against race conditions if SeatHold was bypassed or expired
+           const updatedSF = await SeriesFare.findOneAndUpdate(
+             {
+               _id: sfIdClean,
+               status: 'Active',
+               isArchived: false,
+               availableSeats: { $gte: paxCount }
+             },
+             {
+               $inc: { availableSeats: -paxCount }
+             },
+             { returnDocument: 'after' }
+           );
+
+           if (!updatedSF) {
+             apiBookingFailed = true;
+             details.api_error = 'Seats are no longer available. Flight is either sold out or was reserved by another customer.';
+           } else {
+             if (updatedSF.availableSeats === 0) {
+               await SeriesFare.updateOne({ _id: sfIdClean }, { status: 'SoldOut' });
+             }
+             details.pnr = updatedSF.airlinePnr || 'PENDING';
+             newStatus = 'CONFIRMED';
+           }
         }
+        clearFlightSearchCache();
       }
     } else if (supplierCode === 'AIRIQ') {
       // Mock transformation of payload since frontend isn't doing it yet

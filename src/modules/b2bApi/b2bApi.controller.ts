@@ -4,6 +4,7 @@ import SeriesFare from '../seriesFare/seriesFare.model';
 import B2BClient from './b2bClient.model';
 import Booking from '../bookings/booking.model';
 import User from '../users/user.model';
+import { clearFlightSearchCache } from '../searches/search.controller';
 
 export const authenticateB2BClient = async (req: Request, res: Response) => {
   try {
@@ -250,29 +251,65 @@ export const bookFlight = async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, error: 'This flight is a Live flight and not available in Sandbox test environment.' });
     }
 
-    if (flight.availableSeats < passengers.length) {
-      return res.status(400).json({ success: false, error: 'Not enough seats available' });
-    }
-
+    const paxCount = passengers.length;
     const markup = req.b2bClient.markupPercentage || 0;
     const unitFare = flight.adtFare + (flight.adtFare * (markup / 100));
-    const totalFare = unitFare * passengers.length;
+    const totalFare = unitFare * paxCount;
 
-    // Check Live balance if in live mode
+    // 1. If Live mode: Check & Atomically deduct wallet balance FIRST (CAS)
     if (isLive) {
-      if (req.b2bClient.apiWalletBalance < totalFare) {
-        return res.status(402).json({ success: false, error: 'Insufficient API Wallet Balance. Please recharge.' });
+      const updatedClient = await B2BClient.findOneAndUpdate(
+        { _id: req.b2bClient._id, apiWalletBalance: { $gte: totalFare } },
+        { $inc: { apiWalletBalance: -totalFare } },
+        { returnDocument: 'after' }
+      );
+      if (!updatedClient) {
+        return res.status(402).json({
+          success: false,
+          error: 'Insufficient API Wallet Balance. Please recharge.'
+        });
       }
-      req.b2bClient.apiWalletBalance -= totalFare;
-      await req.b2bClient.save();
+      req.b2bClient = updatedClient;
     }
 
-    // Deduct seats and update inventory
-    flight.availableSeats = Math.max(0, flight.availableSeats - passengers.length);
-    if (flight.availableSeats === 0) {
-      flight.status = 'SoldOut';
+    // 2. ATOMIC SEAT DEDUCTION (Compare-And-Swap / CAS)
+    // Only succeeds if availableSeats >= paxCount at the exact moment of database update.
+    // Completely eliminates race conditions when multiple concurrent requests compete for the same seats.
+    const updatedFlight = await SeriesFare.findOneAndUpdate(
+      {
+        _id: flight._id,
+        status: 'Active',
+        isArchived: false,
+        availableSeats: { $gte: paxCount }
+      },
+      {
+        $inc: { availableSeats: -paxCount }
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!updatedFlight) {
+      // Race condition caught! Another concurrent request booked the last seat(s) first.
+      // Rollback the wallet deduction if in live mode
+      if (isLive) {
+        await B2BClient.updateOne(
+          { _id: req.b2bClient._id },
+          { $inc: { apiWalletBalance: totalFare } }
+        );
+      }
+      return res.status(409).json({
+        success: false,
+        error: `Seats no longer available. Requested: ${paxCount}, but inventory was claimed by a concurrent booking.`
+      });
     }
-    await flight.save();
+
+    // If availableSeats reached 0, transition status to SoldOut
+    if (updatedFlight.availableSeats === 0) {
+      await SeriesFare.updateOne({ _id: updatedFlight._id }, { status: 'SoldOut' });
+    }
+
+    // Immediately flush flight search cache so subsequent searches reflect real-time inventory
+    clearFlightSearchCache();
 
     // Find or create a User account for the partner so bookings appear on the Admin Dashboard
     let partnerUser = await User.findOne({ email: req.b2bClient.email });
