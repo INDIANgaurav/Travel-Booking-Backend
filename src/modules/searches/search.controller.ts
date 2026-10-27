@@ -320,12 +320,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       const endOfDay = new Date(exactDayStart.getTime() + (26 * 3600 * 1000));  // covers full day and IST boundaries
 
       const paxCount = adultCount + childCount;
+      const isTestMode = queryParams.isTestFlight === 'true' || queryParams.sandbox === 'true' || queryParams.mode === 'TEST';
+
       const sfFilter: any = {
         origin: { $regex: new RegExp(`^${originIata}$`, 'i') },
         destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
         status: { $regex: new RegExp('^Active$', 'i') },
         travelDate: { $gte: startOfDay, $lte: endOfDay },
-        availableSeats: { $gte: paxCount }
+        availableSeats: { $gte: paxCount },
+        isTestFlight: isTestMode ? true : { $ne: true }
       };
 
       const seriesFares = await SeriesFare.find(sfFilter).lean();
@@ -735,7 +738,8 @@ export const getNearestFlightsData = async (from: string, to: string, targetDate
       destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
       status: { $regex: new RegExp('^Active$', 'i') },
       travelDate: { $gte: startOfDay },
-      availableSeats: { $gt: 0 }
+      availableSeats: { $gt: 0 },
+      isTestFlight: { $ne: true }
     };
 
     const seriesFares = await SeriesFare.find(sfFilter).sort({ travelDate: 1 }).limit(5).lean();
@@ -1025,7 +1029,8 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
       destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
       status: { $regex: new RegExp('^Active$', 'i') },
       travelDate: { $gte: today, $lte: endDate },
-      availableSeats: { $gt: 0 }
+      availableSeats: { $gt: 0 },
+      isTestFlight: { $ne: true }
     }).lean();
 
     // 2. Fetch from standard DB Flights
