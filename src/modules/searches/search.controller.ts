@@ -53,31 +53,65 @@ const getIataCode = (cityName: string): string => {
   if (!cityName) return '';
   const city = cityName.trim();
   
-  // If it's already a 3 letter code, just return it
-  if (city.length === 3) return city.toUpperCase();
-  
-  // Try to extract from format like "New York (JFK)"
+  // Try to extract from format like "New York (JFK)" or "Goa (GOI)"
   const match = city.match(/\(([A-Z]{3})\)/i);
   if (match) return match[1].toUpperCase();
 
   const cityLower = city.toLowerCase();
   const map: Record<string, string> = {
+    'goa': 'GOI',
+    'dabolim': 'GOI',
+    'mopa': 'GOX',
     'new delhi': 'DEL',
     'delhi': 'DEL',
     'mumbai': 'BOM',
+    'bombay': 'BOM',
     'bengaluru': 'BLR',
     'bangalore': 'BLR',
     'chennai': 'MAA',
+    'madras': 'MAA',
     'kolkata': 'CCU',
+    'calcutta': 'CCU',
     'hyderabad': 'HYD',
     'pune': 'PNQ',
-    'goa': 'GOI',
+    'ahmedabad': 'AMD',
+    'jaipur': 'JAI',
+    'lucknow': 'LKO',
+    'varanasi': 'VNS',
+    'amritsar': 'ATQ',
+    'chandigarh': 'IXC',
+    'srinagar': 'SXR',
+    'kochi': 'COK',
+    'cochin': 'COK',
+    'guwahati': 'GAU',
+    'patna': 'PAT',
+    'bhubaneswar': 'BBI',
+    'bagdogra': 'IXB',
+    'port blair': 'IXZ',
     'london': 'LHR',
     'new york': 'JFK',
     'dubai': 'DXB',
-    'singapore': 'SIN'
+    'singapore': 'SIN',
+    'bali': 'DPS',
+    'denpasar': 'DPS',
+    'bangkok': 'BKK'
   };
-  return map[cityLower] || city.toUpperCase().substring(0, 3);
+
+  if (map[cityLower]) return map[cityLower];
+
+  // If it's already a 3 letter code, return it
+  if (city.length === 3) return city.toUpperCase();
+
+  return city.toUpperCase().substring(0, 3);
+};
+
+// Returns a regex pattern that matches the airport code including sister airports (e.g. GOI / GOX for Goa)
+const getAirportCodeRegex = (code: string): string => {
+  const c = (code || '').toUpperCase().trim();
+  if (c === 'GOI' || c === 'GOX' || c === 'GOA') {
+    return '^(GOI|GOX|GOA)$';
+  }
+  return `^${c}$`;
 };
 
 export const getFlightsData = async (queryParams: any, isAgent: boolean = false, agentId: any = null) => {
@@ -323,8 +357,8 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       const isTestMode = queryParams.isTestFlight === 'true' || queryParams.sandbox === 'true' || queryParams.mode === 'TEST';
 
       const sfFilter: any = {
-        origin: { $regex: new RegExp(`^${originIata}$`, 'i') },
-        destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
+        origin: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
+        destination: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
         status: { $regex: new RegExp('^Active$', 'i') },
         travelDate: { $gte: startOfDay, $lte: endOfDay },
         availableSeats: { $gte: paxCount },
@@ -683,14 +717,14 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
 
     // Merge standard Inventory Flights matching route
     try {
-      const startOfDay = new Date(targetDate);
-      startOfDay.setUTCHours(0, 0, 0, 0);
-      const endOfDay = new Date(targetDate);
-      endOfDay.setUTCHours(23, 59, 59, 999);
+      const exactDayStart = new Date(targetDate);
+      exactDayStart.setUTCHours(0, 0, 0, 0);
+      const startOfDay = new Date(exactDayStart.getTime() - (6 * 3600 * 1000));
+      const endOfDay = new Date(exactDayStart.getTime() + (26 * 3600 * 1000));
 
       const dbFilter: any = {
-        departureAirportCode: { $regex: new RegExp(`^${originIata}$`, 'i') },
-        arrivalAirportCode: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
+        departureAirportCode: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
+        arrivalAirportCode: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
         departureTime: { $gte: startOfDay, $lte: endOfDay }
       };
 
@@ -1025,8 +1059,8 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
     // 1. Fetch from Series Fares
     const SeriesFare = require('../seriesFare/seriesFare.model').default;
     const sfFlights = await SeriesFare.find({
-      origin: { $regex: new RegExp(`^${originIata}$`, 'i') },
-      destination: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
+      origin: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
+      destination: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
       status: { $regex: new RegExp('^Active$', 'i') },
       travelDate: { $gte: today, $lte: endDate },
       availableSeats: { $gt: 0 },
@@ -1035,8 +1069,8 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
 
     // 2. Fetch from standard DB Flights
     const dbFlights = await Flight.find({
-      departureAirportCode: { $regex: new RegExp(`^${originIata}$`, 'i') },
-      arrivalAirportCode: { $regex: new RegExp(`^${destinationIata}$`, 'i') },
+      departureAirportCode: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
+      arrivalAirportCode: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
       departureTime: { $gte: today, $lte: endDate }
     }).lean();
 
