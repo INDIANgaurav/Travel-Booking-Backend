@@ -1024,7 +1024,7 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
     console.log(`Calendar Prices API: origin=${origin} (${originIata}), dest=${destination} (${destinationIata})`);
     console.log(`Calendar Prices API: Found ${dbFlights.length} standard flights and ${sfFlights.length} series fares`);
 
-    const pricesMap: Record<string, number> = {};
+    const pricesMap: Record<string, any> = {};
 
     const formatDateStr = (d: Date) => {
       const year = d.getFullYear();
@@ -1036,10 +1036,10 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
     // Fetch all active suppliers for commission calculation
     const calSuppliers = await Supplier.find({ isActive: true }).lean();
 
-    // Group Series Fares (with supplier commission: compare percentage vs fixedAmount, use higher)
+    // Group Series Fares (Fixed Departures with available seats)
     sfFlights.forEach((sf: any) => {
       if (!sf.travelDate) return;
-      const dateStr = formatDateStr(sf.travelDate);
+      const dateStr = formatDateStr(new Date(sf.travelDate));
       
       let commission = sf.agentCommission || 0;
       const supplier = calSuppliers.find((s: any) => 
@@ -1056,9 +1056,18 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
         commission = Math.max(percComm, supplier.commission.fixedAmount);
       }
       
-      const price = Math.round(sf.adtFare + commission);
-      if (!pricesMap[dateStr] || price < pricesMap[dateStr]) {
-        pricesMap[dateStr] = price;
+      const price = Math.round((Number(sf.adtFare) || 0) + commission);
+      const prev = pricesMap[dateStr];
+      const prevPrice = typeof prev === 'object' && prev !== null ? prev.price : prev;
+
+      if (!prevPrice || price < prevPrice) {
+        pricesMap[dateStr] = {
+          price: price,
+          seats: sf.availableSeats || 0,
+          isFD: true,
+          airline: sf.airline,
+          flightNo: sf.flightNo
+        };
       }
     });
 
@@ -1066,9 +1075,20 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
     dbFlights.forEach((f: any) => {
       if (!f.departureTime) return;
       const dateStr = formatDateStr(new Date(f.departureTime));
-      const price = Math.round(f.price);
-      if (!pricesMap[dateStr] || price < pricesMap[dateStr]) {
-        pricesMap[dateStr] = price;
+      const price = Math.round(f.price || 0);
+      const prev = pricesMap[dateStr];
+      const prevPrice = typeof prev === 'object' && prev !== null ? prev.price : prev;
+
+      if (!prevPrice || price < prevPrice) {
+        if (!prev || !prev.isFD) {
+          pricesMap[dateStr] = {
+            price: price,
+            seats: f.availableSeats || null,
+            isFD: false,
+            airline: f.airline,
+            flightNo: f.flightNumber
+          };
+        }
       }
     });
 
