@@ -464,7 +464,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         gapiSearchResult = await searchFlightsGapi({ query: queryParams });
       }
     } catch (err: any) {
-      console.error("GAPI API Error:", err);
+      console.warn("[GAPI] Live fare search unavailable:", err.message || err);
     }
     
     if (gapiSearchResult && gapiSearchResult.length > 0) {
