@@ -349,7 +349,9 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         return 'AI'; // fallback
       };
       
-      let sfMapped = seriesFares.map((sf: any) => {
+      let sfMapped = seriesFares
+        .filter((sf: any) => sf.departureTime && sf.arrivalTime && sf.departureTime !== 'undefined' && sf.arrivalTime !== 'undefined')
+        .map((sf: any) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
         const depTime = `${dateStr}T${sf.departureTime}:00`;
         const arrTime = `${dateStr}T${sf.arrivalTime}:00`;
@@ -361,7 +363,10 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         }
         const durationMinutes = Math.round((arrDateObj.getTime() - depDateObj.getTime()) / 60000);
 
-        const basePrice = Math.round((sf.adtFare * adultCount) + (sf.chdFare * childCount) + (sf.infFare * infantCount));
+        const adtFare = Number(sf.adtFare ?? sf.amount) || 0;
+        const chdFare = Number(sf.chdFare) || 0;
+        const infFare = Number(sf.infFare) || 0;
+        const basePrice = Math.round((adtFare * adultCount) + (chdFare * childCount) + (infFare * infantCount));
         
         let uploaderCommission = (sf.agentCommission || 0) * (adultCount + childCount);
         let adminCommission = 0;
@@ -450,6 +455,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       sfMapped = sfMapped.map((f: any) => {
         delete f.supplierObj;
         return f;
+      });
+
+      // Deduplicate Series Fares that share identical flightNo, departureTime, arrivalTime, and price on the same date
+      const seenSfKeys = new Set<string>();
+      sfMapped = sfMapped.filter((f: any) => {
+        const key = `${f.flightNumber}_${f.departureTime}_${f.arrivalTime}_${f.price}`;
+        if (seenSfKeys.has(key)) return false;
+        seenSfKeys.add(key);
+        return true;
       });
 
       flights = [...sfMapped, ...flights];
