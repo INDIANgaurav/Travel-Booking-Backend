@@ -41,7 +41,7 @@ const b2bClientSchema = new Schema<IB2BClient>(
     apiWalletBalance: { type: Number, default: 0 },
     webhookUrl: { type: String },
     allowedIPs: [{ type: String }],
-    rateLimitPerMinute: { type: Number, default: 60 }, // Default 1 req/sec limit
+    rateLimitPerMinute: { type: Number, default: 1200 }, // Default 20 req/sec enterprise quota
     markupPercentage: { type: Number, default: 0 } // Extra margin we charge them
   },
   { timestamps: true }

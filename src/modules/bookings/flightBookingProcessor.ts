@@ -21,9 +21,13 @@ export const executeFlightSupplierBooking = async (
   if (!details) return { apiBookingFailed, details, status: newStatus };
 
   let supplierCode = 'NEXUS';
-  if (details.isAirIqFare) supplierCode = 'AIRIQ';
-  else if (details.isGapiFare || (details.flight_keys && details.flight_keys[0]?.startsWith('GAPI_')) || details.resultSessionId) supplierCode = 'GAPI';
-  else if (details.isSeriesFare || (details.flight_keys && details.flight_keys[0]?.startsWith('SF_'))) supplierCode = 'SERIES';
+  if (details.isAirIqFare || (details.flight_keys && details.flight_keys[0]?.startsWith('AIRIQ_')) || details.airIq_ticket_id) {
+    supplierCode = 'AIRIQ';
+  } else if (details.isGapiFare || (details.flight_keys && details.flight_keys[0]?.startsWith('GAPI_')) || details.resultSessionId) {
+    supplierCode = 'GAPI';
+  } else if (details.isSeriesFare || (details.flight_keys && details.flight_keys[0]?.startsWith('SF_'))) {
+    supplierCode = 'SERIES';
+  }
 
   try {
     if (supplierCode === 'NEXUS') {
@@ -166,18 +170,103 @@ export const executeFlightSupplierBooking = async (
         clearFlightSearchCache();
       }
     } else if (supplierCode === 'AIRIQ') {
-      // Mock transformation of payload since frontend isn't doing it yet
-      // This allows the code to compile and be ready for real integration
-      const bookPayload = details.airIqPayload || {}; 
+      const ticketId = details.airIq_ticket_id || details.ticket_id || (details.flight_keys && details.flight_keys[0]?.replace('AIRIQ_', ''));
+      const rawPassengers = details.passengers || [];
+
+      // Partition passengers into Adult, Child, Infant conforming to AirIQ requirements
+      const adults: any[] = [];
+      const children: any[] = [];
+      const infants: any[] = [];
+
+      rawPassengers.forEach((p: any) => {
+        const type = (p.type || 'ADULT').toUpperCase();
+        
+        // AirIQ Title Enum must be one of: Mr. | Mrs. | Ms. | Mstr. | Miss
+        let title = 'Mr.';
+        const gender = (p.gender || 'Male').toLowerCase();
+        const pTitle = (p.title || '').replace(/\./g, '').trim().toUpperCase();
+
+        if (type === 'ADULT') {
+          if (pTitle === 'MRS') title = 'Mrs.';
+          else if (pTitle === 'MS') title = 'Ms.';
+          else if (pTitle === 'MISS') title = 'Miss';
+          else if (gender === 'female') title = 'Ms.';
+          else title = 'Mr.';
+        } else if (type === 'CHILD') {
+          if (pTitle === 'MISS' || gender === 'female') title = 'Miss';
+          else title = 'Mstr.';
+        } else if (type === 'INFANT') {
+          if (pTitle === 'MISS' || gender === 'female') title = 'Miss';
+          else title = 'Mstr.';
+        }
+
+        const nameParts = (p.name || '').trim().split(' ');
+        const firstName = (p.firstName || nameParts[0] || 'Passenger').trim();
+        const lastName = (p.lastName || nameParts.slice(1).join(' ') || 'User').trim();
+
+        // DOB format: YYYY/MM/DD
+        const defaultDob = type === 'CHILD' ? '2018/01/01' : (type === 'INFANT' ? '2025/01/01' : '1990/01/01');
+        const dob = p.dob ? new Date(p.dob).toISOString().split('T')[0].replace(/-/g, '/') : defaultDob;
+
+        // Passport details
+        const defaultExpiry = '2032/01/01';
+        const passportExpiry = p.passportExpiry ? new Date(p.passportExpiry).toISOString().split('T')[0].replace(/-/g, '/') : defaultExpiry;
+        const passportNumber = p.passportNum || p.passportNumber || `IN${Math.floor(1000000 + Math.random() * 9000000)}`;
+        const nationality = p.nationality || 'IN';
+
+        const paxItem = {
+          title,
+          first_name: firstName,
+          last_name: lastName,
+          dob,
+          passport_number: passportNumber,
+          passport_expirydate: passportExpiry,
+          passport_issuing_country_code: nationality,
+          nationality: nationality
+        };
+
+        if (type === 'CHILD') children.push(paxItem);
+        else if (type === 'INFANT') infants.push(paxItem);
+        else adults.push(paxItem);
+      });
+
+      const bookPayload = {
+        ticket_id: ticketId,
+        total_pax: adults.length + children.length + infants.length,
+        adult: adults.length,
+        child: children.length,
+        infant: infants.length,
+        adult_info: adults,
+        child_info: children,
+        infant_info: infants
+      };
+
+      console.log(`Executing AirIQ Booking for ${bookingId} with ticket_id snippet: ${ticketId?.substring(0, 25)}...`);
       const bookResult = await bookFlightAirIq(bookPayload);
-      
-      if (bookResult && bookResult.status === 'success') {
-        details.pnr = bookResult.booking_id;
+
+      if (bookResult && (bookResult.status === 'success' || bookResult.code === '200')) {
+        const bookingIdFromAirIq = bookResult.booking_id || bookResult.data?.booking_id || bookResult.ticket_id || bookingId;
+        details.pnr = bookingIdFromAirIq;
+        details.airIq_booking_id = bookingIdFromAirIq;
         details.airIq_response = bookResult;
+
+        // Attempt instant ticket/airline PNR fetch
+        try {
+          const { getTicketAirIq } = require('../flights/airiq.service');
+          const ticketInfo = await getTicketAirIq(bookingIdFromAirIq);
+          const airlinePnr = ticketInfo?.data?.pnr || ticketInfo?.data?.airline_pnr || ticketInfo?.pnr;
+          if (airlinePnr) {
+            details.pnr = airlinePnr;
+            details.airIq_ticket_details = ticketInfo;
+          }
+        } catch (tErr: any) {
+          console.warn('AirIQ instant ticket fetch note (falling back to booking_id):', tErr.message || tErr);
+        }
+
         newStatus = 'CONFIRMED';
       } else {
         apiBookingFailed = true;
-        details.api_error = bookResult?.message || 'AirIQ returned false success';
+        details.api_error = bookResult?.message || (typeof bookResult?.data === 'string' ? bookResult.data : JSON.stringify(bookResult?.data)) || 'AirIQ returned false success';
       }
     }
   } catch (error: any) {

@@ -3,6 +3,7 @@ import { AuthRequest } from '../../middleware/auth.middleware';
 import RecentSearch from './search.model';
 import Flight from '../inventory/flight.model';
 import { searchFlightsNexus, checkAvailability } from '../flights/nexusdmc.service';
+import { searchFlightsAirIq, getAvailableSectorsAirIq } from '../flights/airiq.service';
 import jwt from 'jsonwebtoken';
 import { searchFlights as searchFlightsGapi } from '../flights/gapi.service';
 import User from '../users/user.model';
@@ -153,6 +154,11 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     let gapiSupplier: any = null;
     try {
       gapiSupplier = await Supplier.findOne({ name: 'GAPI INFOTECH' }).lean();
+    } catch(e) {}
+
+    let airIqSupplier: any = null;
+    try {
+      airIqSupplier = await Supplier.findOne({ name: { $in: ['Air Iq', 'AirIQ', 'AIRIQ'] } }).lean();
     } catch(e) {}
 
     let commissionPolicies: any[] = [];
@@ -715,6 +721,107 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       });
     }
 
+    // Merge active AirIQ Fares matching route
+    if (airIqSupplier && airIqSupplier.isActive && (airIqSupplier.searchEnabled !== false)) {
+      try {
+        const yyyy = targetDate.getFullYear();
+        const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(targetDate.getDate()).padStart(2, '0');
+        const airIqDepDate = `${yyyy}/${mm}/${dd}`;
+
+        const airIqResult = await searchFlightsAirIq({
+          origin: originIata,
+          destination: destinationIata,
+          departure_date: airIqDepDate,
+          adult: adultCount,
+          child: childCount,
+          infant: infantCount
+        });
+
+        if (airIqResult && (airIqResult.status === 'success' || airIqResult.code === '200') && Array.isArray(airIqResult.data)) {
+          let airIqFlights = airIqResult.data.map((flight: any) => {
+            const flightNoParts = (flight.flight_number || '').trim().split(' ');
+            const airlineCode = flightNoParts[0]?.toUpperCase() || 'SG';
+
+            const depDateStr = (flight.departure_date || airIqDepDate).replace(/\//g, '-');
+            const arrDateStr = (flight.arival_date || flight.departure_date || airIqDepDate).replace(/\//g, '-');
+            const depDateTime = `${depDateStr}T${flight.departure_time || '00:00'}:00+05:30`;
+            const arrDateTime = `${arrDateStr}T${flight.arival_time || '00:00'}:00+05:30`;
+
+            const depMs = new Date(depDateTime).getTime();
+            const arrMs = new Date(arrDateTime).getTime();
+            const durationMinutes = (!isNaN(depMs) && !isNaN(arrMs) && arrMs > depMs)
+              ? Math.round((arrMs - depMs) / 60000)
+              : 135;
+
+            const basePrice = Math.round(Number(flight.price || 0) * (adultCount + childCount));
+
+            // Commission & Markup
+            let finalCommission = 0;
+            if (airIqSupplier && airIqSupplier.commission) {
+              const percComm = (basePrice * (airIqSupplier.commission.percentage || 0)) / 100;
+              finalCommission = Math.max(percComm, airIqSupplier.commission.fixedAmount || 0);
+            }
+
+            const revPolicy = applyAdminRevenuePolicy(basePrice, airlineCode);
+            if (revPolicy.commission > 0) {
+              finalCommission = revPolicy.commission;
+            }
+
+            const agentMarkup = applyAgentMarkup(basePrice);
+            const totalPrice = Math.round(basePrice + finalCommission + revPolicy.markup + agentMarkup);
+            const perPaxMarkup = (finalCommission + revPolicy.markup + agentMarkup) / Math.max(1, (adultCount + childCount));
+
+            return {
+              _id: `AIRIQ_${flight.ticket_id}`,
+              airline: flight.airline || 'AirIQ Partner',
+              airlineCode,
+              airlineLogo: `https://pics.avs.io/200/200/${airlineCode}.png`,
+              flightNumber: flight.flight_number || `${airlineCode}-AIQ`,
+              departureCity: flight.origin || originIata,
+              departureAirportCode: flight.origin || originIata,
+              arrivalCity: flight.destination || destinationIata,
+              arrivalAirportCode: flight.destination || destinationIata,
+              departureTime: depDateTime,
+              arrivalTime: arrDateTime,
+              durationMinutes,
+              price: totalPrice,
+              stops: (flight.flight_route || '').toLowerCase().includes('non') ? 0 : 1,
+              seatsAvailable: flight.pax || 9,
+              adultPrice: Math.round(Number(flight.price || 0) + perPaxMarkup),
+              childPrice: Math.round(Number(flight.price || 0) + perPaxMarkup),
+              infantPrice: Number(flight.infant_price || 2250),
+              checkinBaggage: `${flight.cabin_baggage || 15} Kg`,
+              cabinBaggage: `${flight.hand_luggage || 7} Kg`,
+              cabinClass: 'Economy',
+              refundable: 'Non Refundable',
+              isAirIqFare: true,
+              airIq_ticket_id: flight.ticket_id,
+              airIq_raw: flight,
+              supplierId: airIqSupplier?._id,
+              supplierObj: airIqSupplier,
+              fareRules: [{ fareRuleDetail: 'AirIQ Series Fare: Fixed departure inventory. Non-refundable and non-changeable once ticketed.' }]
+            };
+          });
+
+          // Filter AirIQ flights based on CUG mappings
+          airIqFlights = airIqFlights.filter((f: any) => 
+            isFlightAllowedByCUG(f.supplierObj, f.airline) || isFlightAllowedByCUG(f.supplierObj, f.airlineCode)
+          );
+
+          // Cleanup temporary object
+          airIqFlights = airIqFlights.map((f: any) => {
+            if (f.supplierObj) delete f.supplierObj;
+            return f;
+          });
+
+          flights = [...flights, ...airIqFlights];
+        }
+      } catch (airIqErr: any) {
+        console.warn('[AirIQ] Live fare search unavailable:', airIqErr.message || airIqErr);
+      }
+    }
+
     // Merge standard Inventory Flights matching route
     try {
       const exactDayStart = new Date(targetDate);
@@ -965,6 +1072,15 @@ export const checkFlightAvailability = async (req: AuthRequest, res: Response) =
       }
       const updatedSessionId = quoteRes._data?.results?.resultSessionId || quoteRes._data?.results?.[0]?.resultSessionId || flight.resultSessionId;
       return res.json({ success: true, resultSessionId: updatedSessionId, searchSessionId, _data: quoteRes._data });
+    }
+
+    // AirIQ Flights
+    if (flight.isAirIqFare || flight.supplierObj?.name === 'Air Iq' || (flight._id && flight._id.startsWith('AIRIQ_')) || flight.airIq_ticket_id) {
+      const ticketId = flight.airIq_ticket_id || (flight._id && flight._id.startsWith('AIRIQ_') ? flight._id.replace('AIRIQ_', '') : null);
+      if (!ticketId) {
+        return res.status(400).json({ message: "AirIQ flight ticket token expired or missing. Please search again." });
+      }
+      return res.json({ success: true, available: true, price: flight.price, airIq_ticket_id: ticketId });
     }
 
     // 3. Default: Nexus DMC Flights
@@ -1309,6 +1425,17 @@ export const getFlightCities = async (req: Request, res: Response) => {
     } catch (nexusErr) {
       // Nexus API might be down, continue with DB results
     }
+
+    // From AirIQ API sectors
+    try {
+      const airIqSectors = await getAvailableSectorsAirIq();
+      if (Array.isArray(airIqSectors)) {
+        for (const s of airIqSectors) {
+          if (s.Origin) availableCodes.add(s.Origin.toUpperCase());
+          if (s.Destination) availableCodes.add(s.Destination.toUpperCase());
+        }
+      }
+    } catch (airIqErr) {}
 
     // Step 2: Build the final list using ONLY available codes, resolving names from lookup
     const cities = Array.from(availableCodes).map(code => {

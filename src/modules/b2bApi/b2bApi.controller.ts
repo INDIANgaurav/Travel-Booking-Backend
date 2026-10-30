@@ -39,192 +39,6 @@ const sendB2BError = (res: Response, statusCode: number, code: string, message: 
   });
 };
 
-// Guaranteed Sandbox Test Catalogue for deterministic UAT testing
-const getSandboxCatalogue = (markup: number = 0) => {
-  const futureDate = new Date();
-  futureDate.setDate(futureDate.getDate() + 14);
-  const travelDateStr = futureDate.toISOString().split('T')[0];
-
-  const calcFare = (base: number) => Math.round(base + (base * (markup / 100)));
-
-  return [
-    {
-      sfId: 'TC-DOM-DIR',
-      airline: 'Air India',
-      flightNo: 'AI-101',
-      origin: 'DEL',
-      destination: 'BOM',
-      travelDate: travelDateStr,
-      departureTime: '07:00 (IST)',
-      arrivalTime: '09:15 (IST)',
-      stops: 0,
-      availableSeats: 50,
-      isRefundable: false,
-      fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      pricing: {
-        currency: 'INR',
-        baseFare: calcFare(3500),
-        taxAndCharges: calcFare(700),
-        totalFare: calcFare(4200),
-        breakdown: {
-          adultFare: calcFare(4200),
-          childFare: calcFare(4200),
-          infantFare: 1500
-        },
-        fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-      },
-      baggage: { cabin: '7 Kg', checkin: '15 Kg' },
-      isTestFlight: true
-    },
-    {
-      sfId: 'TC-INT-DIR',
-      airline: 'IndiGo',
-      flightNo: '6E-1401',
-      origin: 'DEL',
-      destination: 'DXB',
-      travelDate: travelDateStr,
-      departureTime: '11:30 (IST)',
-      arrivalTime: '14:00 (GST)',
-      stops: 0,
-      availableSeats: 40,
-      isRefundable: false,
-      fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      pricing: {
-        currency: 'INR',
-        baseFare: calcFare(12000),
-        taxAndCharges: calcFare(3000),
-        totalFare: calcFare(15000),
-        breakdown: {
-          adultFare: calcFare(15000),
-          childFare: calcFare(15000),
-          infantFare: 2500
-        },
-        fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-      },
-      baggage: { cabin: '7 Kg', checkin: '30 Kg' },
-      isInternational: true,
-      isTestFlight: true
-    },
-    {
-      sfId: 'TC-DOM-1STOP',
-      airline: 'IndiGo',
-      flightNo: '6E-205/6E-512',
-      origin: 'DEL',
-      destination: 'GOI',
-      travelDate: travelDateStr,
-      departureTime: '06:00 (IST)',
-      arrivalTime: '11:15 (IST)',
-      stops: 1,
-      via: 'BOM',
-      availableSeats: 35,
-      segments: [
-        { origin: 'DEL', destination: 'BOM', flightNo: '6E-205', departureTime: '06:00 (IST)', arrivalTime: '08:15 (IST)' },
-        { origin: 'BOM', destination: 'GOI', flightNo: '6E-512', departureTime: '10:00 (IST)', arrivalTime: '11:15 (IST)' }
-      ],
-      isRefundable: false,
-      fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      pricing: {
-        currency: 'INR',
-        baseFare: calcFare(5200),
-        taxAndCharges: calcFare(1300),
-        totalFare: calcFare(6500),
-        breakdown: {
-          adultFare: calcFare(6500),
-          childFare: calcFare(6500),
-          infantFare: 1800
-        },
-        fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-      },
-      baggage: { cabin: '7 Kg', checkin: '15 Kg' },
-      isTestFlight: true
-    },
-    {
-      sfId: 'TC-INT-1STOP',
-      airline: 'Air India',
-      flightNo: 'AI-652/AI-983',
-      origin: 'DEL',
-      destination: 'DXB',
-      travelDate: travelDateStr,
-      departureTime: '08:00 (IST)',
-      arrivalTime: '14:45 (GST)',
-      stops: 1,
-      via: 'BOM',
-      availableSeats: 30,
-      segments: [
-        { origin: 'DEL', destination: 'BOM', flightNo: 'AI-652', departureTime: '08:00 (IST)', arrivalTime: '10:10 (IST)' },
-        { origin: 'BOM', destination: 'DXB', flightNo: 'AI-983', departureTime: '12:30 (IST)', arrivalTime: '14:45 (GST)' }
-      ],
-      isRefundable: false,
-      fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      pricing: {
-        currency: 'INR',
-        baseFare: calcFare(15000),
-        taxAndCharges: calcFare(3500),
-        totalFare: calcFare(18500),
-        breakdown: {
-          adultFare: calcFare(18500),
-          childFare: calcFare(18500),
-          infantFare: 2800
-        },
-        fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-      },
-      baggage: { cabin: '7 Kg', checkin: '30 Kg' },
-      isInternational: true,
-      isTestFlight: true
-    },
-    // Retain legacy aliases for backward compatibility
-    {
-      sfId: 'TC-TEST-SEAT1',
-      airline: 'Air India',
-      flightNo: 'AI-101',
-      origin: 'DEL',
-      destination: 'BOM',
-      travelDate: travelDateStr,
-      departureTime: '07:00 (IST)',
-      arrivalTime: '09:15 (IST)',
-      stops: 0,
-      availableSeats: 50,
-      isRefundable: false,
-      fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      pricing: {
-        currency: 'INR',
-        baseFare: calcFare(3500),
-        taxAndCharges: calcFare(700),
-        totalFare: calcFare(4200),
-        breakdown: { adultFare: calcFare(4200), childFare: calcFare(4200), infantFare: 1500 },
-        fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-      },
-      baggage: { cabin: '7 Kg', checkin: '15 Kg' },
-      isTestFlight: true
-    },
-    {
-      sfId: 'TC-TEST-INTL',
-      airline: 'IndiGo',
-      flightNo: '6E-1401',
-      origin: 'DEL',
-      destination: 'DXB',
-      travelDate: travelDateStr,
-      departureTime: '11:30 (IST)',
-      arrivalTime: '14:00 (GST)',
-      stops: 0,
-      availableSeats: 40,
-      isRefundable: false,
-      fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      pricing: {
-        currency: 'INR',
-        baseFare: calcFare(12000),
-        taxAndCharges: calcFare(3000),
-        totalFare: calcFare(15000),
-        breakdown: { adultFare: calcFare(15000), childFare: calcFare(15000), infantFare: 2500 },
-        fareValidUntil: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-      },
-      baggage: { cabin: '7 Kg', checkin: '30 Kg' },
-      isInternational: true,
-      isTestFlight: true
-    }
-  ];
-};
-
 // 1. Authentication Controller
 export const authenticateB2BClient = async (req: Request, res: Response) => {
   try {
@@ -368,57 +182,8 @@ export const getSectors = async (req: Request, res: Response) => {
       }
     ]);
 
-    let responseData = sectors;
-    if (!isLive && sectors.length === 0) {
-      const futureDateStr = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
-      responseData = [
-        {
-          origin: 'DEL',
-          destination: 'BOM',
-          airline: 'Air India',
-          stops: 0,
-          currency: 'INR',
-          minFare: 4200,
-          totalFlights: 2,
-          availableDates: [futureDateStr]
-        },
-        {
-          origin: 'DEL',
-          destination: 'DXB',
-          airline: 'IndiGo',
-          stops: 0,
-          currency: 'INR',
-          minFare: 15000,
-          totalFlights: 1,
-          availableDates: [futureDateStr]
-        },
-        {
-          origin: 'DEL',
-          destination: 'GOI',
-          airline: 'IndiGo',
-          stops: 1,
-          via: 'BOM',
-          currency: 'INR',
-          minFare: 6500,
-          totalFlights: 1,
-          availableDates: [futureDateStr]
-        },
-        {
-          origin: 'DEL',
-          destination: 'DXB',
-          airline: 'Air India',
-          stops: 1,
-          via: 'BOM',
-          currency: 'INR',
-          minFare: 18500,
-          totalFlights: 1,
-          availableDates: [futureDateStr]
-        }
-      ];
-    }
-
-    return sendB2BSuccess(res, 200, responseData, {
-      count: responseData.length,
+    return sendB2BSuccess(res, 200, sectors, {
+      count: sectors.length,
       environment: isLive ? 'PRODUCTION' : 'SANDBOX'
     });
   } catch (error: any) {
@@ -499,6 +264,8 @@ export const searchFlights = async (req: Request, res: Response) => {
       const taxAndCharges = unitAdultFare - baseFare;
       const unitChildFare = unitAdultFare;
       const unitInfantFare = 1500;
+      const isConnecting = Boolean(f.segments && f.segments.length > 1);
+      const stops = isConnecting ? f.segments!.length - 1 : 0;
 
       return {
         sfId: f.sfId,
@@ -509,6 +276,9 @@ export const searchFlights = async (req: Request, res: Response) => {
         travelDate: f.travelDate ? new Date(f.travelDate).toISOString().split('T')[0] : date,
         departureTime: f.departureTime.includes('IST') ? f.departureTime : `${f.departureTime} (IST)`,
         arrivalTime: f.arrivalTime.includes('IST') ? f.arrivalTime : `${f.arrivalTime} (IST)`,
+        stops,
+        isConnecting,
+        segments: isConnecting ? f.segments : undefined,
         availableSeats: f.availableSeats,
         isRefundable: Boolean(f.isRefundable),
         baggage: {
@@ -529,20 +299,6 @@ export const searchFlights = async (req: Request, res: Response) => {
         }
       };
     });
-
-    // In Sandbox mode: If no database flights match, provide deterministic test flight matching the sector
-    if (!isLive && results.length === 0) {
-      const sandboxCatalog = getSandboxCatalogue(markup);
-      const matchingSandbox = sandboxCatalog.filter(
-        f => f.origin === origin && f.destination === destination
-      );
-      if (matchingSandbox.length > 0) {
-        results = matchingSandbox.map(item => ({
-          ...item,
-          travelDate: date
-        }));
-      }
-    }
 
     return sendB2BSuccess(res, 200, results, {
       count: results.length,
@@ -662,49 +418,39 @@ export const bookFlight = async (req: Request, res: Response) => {
     const seatsRequired = adultCount + childCount + infantCount; // Every passenger including infant gets a dedicated seat allocated
     const isLive = Boolean(req.isLiveMode);
 
-    // 4. Fetch Flight
-    let flight = await SeriesFare.findOne({ sfId, status: 'Active', isArchived: false });
+    // 4. Fetch Flight from Database
+    const flight = await SeriesFare.findOne({ sfId, status: 'Active', isArchived: false });
 
-    // Handle Sandbox Test Catalogue fallback
-    let isMockSandboxFlight = false;
-    let mockFlightData: any = null;
-    if (!flight && !isLive) {
-      const catalogue = getSandboxCatalogue(req.b2bClient.markupPercentage || 0);
-      mockFlightData = catalogue.find(c => c.sfId === sfId);
-      if (mockFlightData) {
-        isMockSandboxFlight = true;
-      }
-    }
-
-    if (!flight && !isMockSandboxFlight) {
-      return sendB2BError(res, 404, 'FLIGHT_NOT_FOUND', `Flight with sfId "${sfId}" not found or is no longer active.`);
+    if (!flight) {
+      return sendB2BError(
+        res,
+        404,
+        'FLIGHT_NOT_FOUND',
+        `Flight with sfId "${sfId}" not found or is no longer active. Please search active flights and select a valid sfId.`
+      );
     }
 
     // Safety checks for mode
-    if (flight) {
-      if (isLive && flight.isTestFlight) {
-        return sendB2BError(res, 403, 'TEST_FLIGHT_IN_LIVE', 'Test flights cannot be booked in Live production mode.');
-      }
-      if (!isLive && !flight.isTestFlight) {
-        return sendB2BError(res, 403, 'LIVE_FLIGHT_IN_SANDBOX', 'Live production flights cannot be booked in Sandbox environment.');
-      }
+    if (isLive && flight.isTestFlight) {
+      return sendB2BError(res, 403, 'TEST_FLIGHT_IN_LIVE', 'Test flights cannot be booked in Live production mode.');
+    }
+    if (!isLive && !flight.isTestFlight) {
+      return sendB2BError(res, 403, 'LIVE_FLIGHT_IN_SANDBOX', 'Live production flights cannot be booked in Sandbox environment.');
     }
 
-    // Check available seats for mock flight
-    if (isMockSandboxFlight && mockFlightData) {
-      if (mockFlightData.availableSeats < seatsRequired) {
-        return sendB2BError(
-          res,
-          409,
-          'SEATS_NOT_AVAILABLE',
-          `Seats no longer available. Requested: ${seatsRequired}, available: ${mockFlightData.availableSeats}.`,
-          [{ requested: seatsRequired, available: mockFlightData.availableSeats }]
-        );
-      }
+    // Check available seats
+    if (flight.availableSeats < seatsRequired) {
+      return sendB2BError(
+        res,
+        409,
+        'SEATS_NOT_AVAILABLE',
+        `Seats no longer available. Requested: ${seatsRequired}, available: ${flight.availableSeats}.`,
+        [{ requested: seatsRequired, available: flight.availableSeats }]
+      );
     }
 
     const markup = req.b2bClient.markupPercentage || 0;
-    const unitAdultFare = flight ? Math.round(flight.adtFare + (flight.adtFare * (markup / 100))) : mockFlightData.pricing.breakdown.adultFare;
+    const unitAdultFare = Math.round(flight.adtFare + (flight.adtFare * (markup / 100)));
     const unitChildFare = unitAdultFare;
     const unitInfantFare = 1500;
     const totalFare = (unitAdultFare * adultCount) + (unitChildFare * childCount) + (unitInfantFare * infantCount);
@@ -782,8 +528,8 @@ export const bookFlight = async (req: Request, res: Response) => {
     }
 
     // Determine PNR and Airport types
-    const originAirport = (flight?.origin || mockFlightData?.origin || '').toUpperCase();
-    const destAirport = (flight?.destination || mockFlightData?.destination || '').toUpperCase();
+    const originAirport = flight.origin.toUpperCase();
+    const destAirport = flight.destination.toUpperCase();
     const indianAirports = new Set(['DEL', 'BOM', 'BLR', 'GOI', 'GOX', 'CCU', 'HYD', 'MAA', 'PNQ', 'AMD', 'JAI']);
     const isInternational = !indianAirports.has(originAirport) || !indianAirports.has(destAirport);
 
@@ -792,7 +538,7 @@ export const bookFlight = async (req: Request, res: Response) => {
       const pnrPrefix = isInternational ? 'TESTINT' : 'TESTDOM';
       pnr = `${pnrPrefix}${Math.floor(100000 + Math.random() * 900000)}`;
     } else {
-      pnr = flight?.airlinePnr || `TC${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      pnr = flight.airlinePnr || `TC${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     }
     const bookingId = `BK-B2B-${Math.floor(100000 + Math.random() * 900000)}`;
 
@@ -815,19 +561,23 @@ export const bookFlight = async (req: Request, res: Response) => {
       idempotencyKey: idempotencyKey || undefined,
       date: new Date().toISOString().split('T')[0],
       details: {
-        airline: flight?.airline || mockFlightData?.airline,
-        flightNo: flight?.flightNo || mockFlightData?.flightNo,
+        airline: flight.airline,
+        flightNo: flight.flightNo,
         from: originAirport,
         to: destAirport,
         pnr,
+        sfId: flight.sfId,
         isSeriesFare: true,
+        stops: (flight.segments && flight.segments.length > 1) ? flight.segments.length - 1 : 0,
+        isConnecting: Boolean(flight.segments && flight.segments.length > 1),
+        segments: flight.segments || [],
         isTestBooking: !isLive,
         b2bClientId: req.b2bClient._id,
         b2bCompanyName: req.b2bClient.companyName,
         b2bUsername: req.b2bClient.username,
         idempotencyKey: idempotencyKey || undefined,
         clientBookingRef: clientBookingRef || undefined,
-        flightId: flight?._id,
+        flightId: flight._id,
         contactDetails: contactDetails || { email: req.b2bClient.email },
         passengers: passengers.map((p: any) => ({
           name: `${p.title ? p.title + ' ' : ''}${p.firstName || ''} ${p.lastName || ''}`.trim().toUpperCase(),
@@ -860,14 +610,17 @@ export const bookFlight = async (req: Request, res: Response) => {
         totalFare
       },
       flight: {
-        sfId,
-        airline: flight?.airline || mockFlightData?.airline,
-        flightNo: flight?.flightNo || mockFlightData?.flightNo,
+        sfId: flight.sfId,
+        airline: flight.airline,
+        flightNo: flight.flightNo,
         origin: originAirport,
         destination: destAirport,
-        travelDate: flight ? new Date(flight.travelDate).toISOString().split('T')[0] : mockFlightData?.travelDate,
-        departureTime: flight?.departureTime || mockFlightData?.departureTime,
-        arrivalTime: flight?.arrivalTime || mockFlightData?.arrivalTime
+        travelDate: new Date(flight.travelDate).toISOString().split('T')[0],
+        departureTime: flight.departureTime,
+        arrivalTime: flight.arrivalTime,
+        stops: (flight.segments && flight.segments.length > 1) ? flight.segments.length - 1 : 0,
+        isConnecting: Boolean(flight.segments && flight.segments.length > 1),
+        segments: (flight.segments && flight.segments.length > 1) ? flight.segments : undefined
       },
       passengers: passengers.map((p: any) => ({
         title: p.title,

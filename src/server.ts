@@ -74,7 +74,12 @@ app.get('/', (req, res) => {
   res.send('Travel Booking App API is running (TypeScript)... ');
 });
 
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200, message: 'Too many requests from this IP, please try again after 15 minutes' });
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: 'Too many requests from this IP, please try again after 15 minutes',
+  skip: (req) => req.originalUrl.startsWith('/api/v1/b2b')
+});
 app.use('/api/', apiLimiter);
 
 app.use('/api/auth', authRoutes);

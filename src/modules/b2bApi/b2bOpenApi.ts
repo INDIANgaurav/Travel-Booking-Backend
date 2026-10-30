@@ -703,7 +703,7 @@ Includes automated JWT extraction, Idempotency-Key generation, and CAS flight bo
       { key: 'username', value: username, type: 'string' },
       { key: 'password', value: password, type: 'string' },
       { key: 'tokenId', value: '', type: 'string' },
-      { key: 'activeSfId', value: 'TC-DOM-DIR', type: 'string' }
+      { key: 'activeSfId', value: 'SF-TC-C1A-20261205', type: 'string' }
     ],
     item: [
       {
