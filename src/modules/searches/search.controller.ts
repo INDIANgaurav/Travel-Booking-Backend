@@ -452,6 +452,33 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         }
         const formattedArrivalTime = `${arrivalDateStr}T${sf.arrivalTime}:00`;
 
+        const mappedSegments = (sf.segments && sf.segments.length > 0) ? sf.segments.map((s: any) => {
+          const sDepTime = s.departureTime && !s.departureTime.includes('T')
+            ? `${dateStr}T${s.departureTime}:00`
+            : (s.departureTime || depTime);
+
+          let sArrDateStr = dateStr;
+          if (s.departureTime && s.arrivalTime && s.arrivalTime < s.departureTime) {
+            const nextD = new Date(dateStr);
+            nextD.setDate(nextD.getDate() + 1);
+            sArrDateStr = nextD.toISOString().split('T')[0];
+          }
+          const sArrTime = s.arrivalTime && !s.arrivalTime.includes('T')
+            ? `${sArrDateStr}T${s.arrivalTime}:00`
+            : (s.arrivalTime || formattedArrivalTime);
+
+          return {
+            airline: s.airline || sf.airline,
+            flightNo: s.flightNo || sf.flightNo,
+            origin: s.origin,
+            destination: s.destination,
+            departureTime: sDepTime,
+            arrivalTime: sArrTime,
+            departureTerminal: s.departureTerminal || '',
+            arrivalTerminal: s.arrivalTerminal || ''
+          };
+        }) : [];
+
         return {
           _id: `SF_${sf._id}`,
           airline: sf.airline,
@@ -470,7 +497,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           infantPrice: sf.infFare,
           stops: (sf.segments && sf.segments.length > 1) ? sf.segments.length - 1 : (sf.stops || 0),
           isConnecting: Boolean(sf.segments && sf.segments.length > 1),
-          segments: sf.segments || [],
+          segments: mappedSegments,
           isSeriesFare: true,
           seriesFareId: sf.sfId,
           airlinePnr: sf.airlinePnr,
