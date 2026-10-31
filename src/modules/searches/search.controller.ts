@@ -490,6 +490,8 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           arrivalAirportCode: sf.destination,
           departureTime: depTime,
           arrivalTime: formattedArrivalTime,
+          departureTerminal: sf.departureTerminal || (sf.segments?.[0]?.departureTerminal) || '',
+          arrivalTerminal: sf.arrivalTerminal || (sf.segments?.[sf.segments.length - 1]?.arrivalTerminal) || '',
           durationMinutes: durationMinutes > 0 ? durationMinutes : 135, // Fallback if negative
           price: price, // Show exact base + commission without additional markup
           adultPrice: sf.adtFare + (finalCommission / (adultCount + childCount + infantCount)),

@@ -276,6 +276,8 @@ export const searchFlights = async (req: Request, res: Response) => {
         travelDate: f.travelDate ? new Date(f.travelDate).toISOString().split('T')[0] : date,
         departureTime: f.departureTime.includes('IST') ? f.departureTime : `${f.departureTime} (IST)`,
         arrivalTime: f.arrivalTime.includes('IST') ? f.arrivalTime : `${f.arrivalTime} (IST)`,
+        departureTerminal: f.departureTerminal || (f.segments?.[0]?.departureTerminal) || '',
+        arrivalTerminal: f.arrivalTerminal || (f.segments?.[f.segments.length - 1]?.arrivalTerminal) || '',
         stops,
         isConnecting,
         segments: isConnecting ? f.segments : undefined,
