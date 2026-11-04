@@ -123,6 +123,22 @@ export const executeFlightSupplierBooking = async (
       const sfIdClean = sfId.replace('SF_', '');
       
       if (mongoose.Types.ObjectId.isValid(sfIdClean)) {
+        const seriesFareCheck = await SeriesFare.findById(sfIdClean);
+        const bookingNow = new Date();
+        if (seriesFareCheck && !seriesFareCheck.isTestFlight && seriesFareCheck.travelDate && seriesFareCheck.departureTime) {
+          const flightDateStr = seriesFareCheck.travelDate.toISOString().split('T')[0];
+          const depDateTime = new Date(`${flightDateStr}T${seriesFareCheck.departureTime}:00`);
+          if (!isNaN(depDateTime.getTime()) && bookingNow >= depDateTime) {
+            apiBookingFailed = true;
+            details.api_error = 'Flight has already departed. Booking cannot be confirmed.';
+            return {
+              apiBookingFailed: true,
+              details,
+              status: 'TICKETING_IN_PROGRESS'
+            };
+          }
+        }
+
         const SeatHold = require('../seriesFare/seatHold.model').default;
         const paxCount = details.passengers?.length || 1;
         const hold = await SeatHold.findOne({ userId, flightId: sfIdClean, status: 'ACTIVE' });

@@ -255,10 +255,28 @@ export const searchFlights = async (req: Request, res: Response) => {
     }
 
     const flights = await SeriesFare.find(flightQuery);
+    const now = new Date();
+    const validFlights = flights.filter(f => {
+      if (!f.departureTime || !f.travelDate) return false;
+      if (isLive) {
+        const flightDateStr = f.travelDate.toISOString().split('T')[0];
+        const depDateTime = new Date(`${flightDateStr}T${f.departureTime}:00`);
+        if (isNaN(depDateTime.getTime())) return false;
+        const cutoffHours = Number(f.closeBeforeDepartureHours) >= 0 ? Number(f.closeBeforeDepartureHours) : 2;
+        const cutoffDays = Number(f.closeBeforeDepartureDays) || 0;
+        const totalCutoffMs = (cutoffDays * 24 + cutoffHours) * 60 * 60 * 1000;
+        const closeCutoffTime = new Date(depDateTime.getTime() - totalCutoffMs);
+        if (now >= closeCutoffTime || now >= depDateTime) {
+          return false;
+        }
+      }
+      return true;
+    });
+
     const markup = req.b2bClient?.markupPercentage || 0;
     const fareValidUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 mins lock window
 
-    let results = flights.map(f => {
+    let results = validFlights.map(f => {
       const unitAdultFare = Math.round(f.adtFare + (f.adtFare * (markup / 100)));
       const baseFare = Math.round(unitAdultFare * 0.82);
       const taxAndCharges = unitAdultFare - baseFare;
@@ -438,6 +456,26 @@ export const bookFlight = async (req: Request, res: Response) => {
     }
     if (!isLive && !flight.isTestFlight) {
       return sendB2BError(res, 403, 'LIVE_FLIGHT_IN_SANDBOX', 'Live production flights cannot be booked in Sandbox environment.');
+    }
+
+    // Departure & Cutoff window check
+    const bookingNow = new Date();
+    const flightDateStr = flight.travelDate ? new Date(flight.travelDate).toISOString().split('T')[0] : '';
+    if (isLive && flightDateStr && flight.departureTime) {
+      const flightDepDate = new Date(`${flightDateStr}T${flight.departureTime}:00`);
+      const cutoffHours = Number(flight.closeBeforeDepartureHours) >= 0 ? Number(flight.closeBeforeDepartureHours) : 2;
+      const cutoffDays = Number(flight.closeBeforeDepartureDays) || 0;
+      const totalCutoffMs = (cutoffDays * 24 + cutoffHours) * 60 * 60 * 1000;
+      const cutoffTime = new Date(flightDepDate.getTime() - totalCutoffMs);
+
+      if (bookingNow >= cutoffTime || bookingNow >= flightDepDate) {
+        return sendB2BError(
+          res,
+          422,
+          'BOOKING_WINDOW_CLOSED',
+          `The booking window for flight ${flight.flightNo} has closed. Bookings are not permitted after departure cutoff.`
+        );
+      }
     }
 
     // Check available seats

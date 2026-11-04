@@ -392,8 +392,31 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         return 'AI'; // fallback
       };
       
+      const now = new Date();
       let sfMapped = seriesFares
-        .filter((sf: any) => sf.departureTime && sf.arrivalTime && sf.departureTime !== 'undefined' && sf.arrivalTime !== 'undefined')
+        .filter((sf: any) => {
+          if (!sf.departureTime || !sf.arrivalTime || sf.departureTime === 'undefined' || sf.arrivalTime === 'undefined') {
+            return false;
+          }
+          const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '';
+          if (!dateStr) return false;
+          const depTime = `${dateStr}T${sf.departureTime}:00`;
+          const depDateObj = new Date(depTime);
+          if (isNaN(depDateObj.getTime())) return false;
+
+          // In live production searches, filter out departed flights and flights whose booking window has closed
+          if (!isTestMode) {
+            const cutoffHours = Number(sf.closeBeforeDepartureHours) >= 0 ? Number(sf.closeBeforeDepartureHours) : 2;
+            const cutoffDays = Number(sf.closeBeforeDepartureDays) || 0;
+            const totalCutoffMs = (cutoffDays * 24 + cutoffHours) * 60 * 60 * 1000;
+            const closeCutoffTime = new Date(depDateObj.getTime() - totalCutoffMs);
+
+            if (now >= closeCutoffTime || now >= depDateObj) {
+              return false; // Flight has departed or booking cutoff window passed
+            }
+          }
+          return true;
+        })
         .map((sf: any) => {
         const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
         const depTime = `${dateStr}T${sf.departureTime}:00`;
@@ -401,8 +424,10 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         
         let depDateObj = new Date(depTime);
         let arrDateObj = new Date(arrTime);
+        let calculatedDayChange = sf.dayChange || 0;
         if (arrDateObj < depDateObj) {
           arrDateObj.setDate(arrDateObj.getDate() + 1); // Arrival is next day
+          calculatedDayChange = 1;
         }
         const durationMinutes = Math.round((arrDateObj.getTime() - depDateObj.getTime()) / 60000);
 
@@ -493,6 +518,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           departureTerminal: sf.departureTerminal || (sf.segments?.[0]?.departureTerminal) || '',
           arrivalTerminal: sf.arrivalTerminal || (sf.segments?.[sf.segments.length - 1]?.arrivalTerminal) || '',
           durationMinutes: durationMinutes > 0 ? durationMinutes : 135, // Fallback if negative
+          dayChange: calculatedDayChange,
           price: price, // Show exact base + commission without additional markup
           adultPrice: sf.adtFare + (finalCommission / (adultCount + childCount + infantCount)),
           childPrice: sf.chdFare + (finalCommission / (adultCount + childCount + infantCount)),

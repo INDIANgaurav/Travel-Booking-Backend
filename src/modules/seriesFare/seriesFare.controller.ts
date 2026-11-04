@@ -33,6 +33,55 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
     const sfId = `SF${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)}`;
     const isTest = isTestFlight === true || isTestFlight === 'true';
 
+    // Fare & Seat Integrity Validation
+    const parsedAdtFare = Number(adtFare);
+    const parsedTotalSeats = Number(totalSeats);
+    const parsedAvailSeats = Number(availableSeats ?? totalSeats);
+
+    if (isNaN(parsedAdtFare) || parsedAdtFare <= 0) {
+      return res.status(400).json({ success: false, message: 'Adult fare must be a positive number greater than 0.' });
+    }
+    if (chdFare !== undefined && Number(chdFare) < 0) {
+      return res.status(400).json({ success: false, message: 'Child fare cannot be negative.' });
+    }
+    if (infFare !== undefined && Number(infFare) < 0) {
+      return res.status(400).json({ success: false, message: 'Infant fare cannot be negative.' });
+    }
+    if (isNaN(parsedTotalSeats) || parsedTotalSeats <= 0) {
+      return res.status(400).json({ success: false, message: 'Total seats must be at least 1.' });
+    }
+    if (parsedAvailSeats < 0) {
+      return res.status(400).json({ success: false, message: 'Available seats cannot be negative.' });
+    }
+
+    // Connecting Route Continuity & Layover Validation
+    if (segments && Array.isArray(segments) && segments.length > 1) {
+      for (let i = 1; i < segments.length; i++) {
+        const prev = segments[i - 1];
+        const curr = segments[i];
+        if (prev.destination && curr.origin && prev.destination.toUpperCase() !== curr.origin.toUpperCase()) {
+          return res.status(400).json({
+            success: false,
+            message: `Route continuity mismatch: Leg ${i + 1} Origin (${curr.origin}) must match Leg ${i} Destination (${prev.destination}).`
+          });
+        }
+        if (prev.arrivalTime && curr.departureTime && !curr.dayChange) {
+          const [prevArrH, prevArrM] = prev.arrivalTime.split(':').map(Number);
+          const [currDepH, currDepM] = curr.departureTime.split(':').map(Number);
+          if (!isNaN(prevArrH) && !isNaN(currDepH)) {
+            const prevArrTotal = prevArrH * 60 + prevArrM;
+            const currDepTotal = currDepH * 60 + currDepM;
+            if (currDepTotal < prevArrTotal) {
+              return res.status(400).json({
+                success: false,
+                message: `Invalid layover timing: Leg ${i + 1} departure (${curr.departureTime}) is before Leg ${i} arrival (${prev.arrivalTime}). Adjust flight times or set Day Change (+1).`
+              });
+            }
+          }
+        }
+      }
+    }
+
     const seriesFare = await SeriesFare.create({
       supplierId: req.user?._id,
       supplierName: req.user?.companyName || req.user?.name || 'PJ HOLIDAY BOOKERS',
@@ -135,6 +184,48 @@ export const updateSeriesFare = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
+
+    if (updateData.adtFare !== undefined && (isNaN(Number(updateData.adtFare)) || Number(updateData.adtFare) <= 0)) {
+      return res.status(400).json({ success: false, message: 'Adult fare must be a positive number greater than 0.' });
+    }
+    if (updateData.chdFare !== undefined && Number(updateData.chdFare) < 0) {
+      return res.status(400).json({ success: false, message: 'Child fare cannot be negative.' });
+    }
+    if (updateData.infFare !== undefined && Number(updateData.infFare) < 0) {
+      return res.status(400).json({ success: false, message: 'Infant fare cannot be negative.' });
+    }
+    if (updateData.totalSeats !== undefined && (isNaN(Number(updateData.totalSeats)) || Number(updateData.totalSeats) <= 0)) {
+      return res.status(400).json({ success: false, message: 'Total seats must be at least 1.' });
+    }
+    if (updateData.availableSeats !== undefined && Number(updateData.availableSeats) < 0) {
+      return res.status(400).json({ success: false, message: 'Available seats cannot be negative.' });
+    }
+    if (updateData.segments && Array.isArray(updateData.segments) && updateData.segments.length > 1) {
+      for (let i = 1; i < updateData.segments.length; i++) {
+        const prev = updateData.segments[i - 1];
+        const curr = updateData.segments[i];
+        if (prev.destination && curr.origin && prev.destination.toUpperCase() !== curr.origin.toUpperCase()) {
+          return res.status(400).json({
+            success: false,
+            message: `Route continuity mismatch: Leg ${i + 1} Origin (${curr.origin}) must match Leg ${i} Destination (${prev.destination}).`
+          });
+        }
+        if (prev.arrivalTime && curr.departureTime && !curr.dayChange) {
+          const [prevArrH, prevArrM] = prev.arrivalTime.split(':').map(Number);
+          const [currDepH, currDepM] = curr.departureTime.split(':').map(Number);
+          if (!isNaN(prevArrH) && !isNaN(currDepH)) {
+            const prevArrTotal = prevArrH * 60 + prevArrM;
+            const currDepTotal = currDepH * 60 + currDepM;
+            if (currDepTotal < prevArrTotal) {
+              return res.status(400).json({
+                success: false,
+                message: `Invalid layover timing: Leg ${i + 1} departure (${curr.departureTime}) is before Leg ${i} arrival (${prev.arrivalTime}). Adjust flight times or set Day Change (+1).`
+              });
+            }
+          }
+        }
+      }
+    }
 
     const seriesFare = await SeriesFare.findByIdAndUpdate(id, updateData, { new: true });
     if (!seriesFare) {
