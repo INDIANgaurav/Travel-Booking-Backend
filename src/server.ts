@@ -46,6 +46,7 @@ import groupBookingRoutes from './modules/bookings/groupBooking.routes';
 import notificationRoutes from './modules/notifications/notification.routes';
 import b2bApiRoutes from './modules/b2bApi/b2bApi.routes';
 import b2bAdminRoutes from './modules/b2bApi/b2bAdmin.routes';
+import festiveBannerRoutes from './modules/festiveBanners/festiveBanner.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
 
 connectDB().then(() => {
@@ -117,6 +118,7 @@ app.use('/api/promos', promoRoutes);
 app.use('/api/cancellations', cancellationRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/v1/b2b', b2bApiRoutes);
+app.use('/api/festive-banners', festiveBannerRoutes);
 
 // Global Error Handler to catch [object Object] issues
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
