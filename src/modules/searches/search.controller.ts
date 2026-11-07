@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import { searchFlights as searchFlightsGapi } from '../flights/gapi.service';
 import User from '../users/user.model';
 import SeriesFare from '../seriesFare/seriesFare.model';
+import Booking from '../bookings/booking.model';
 import Supplier from '../supplier/supplier.model';
 import { Request } from 'express';
 
@@ -1520,40 +1521,109 @@ export const getFlightCities = async (req: Request, res: Response) => {
   }
 };
 
-// @desc    Get top flight routes based on active Series Fares
+// @desc    Get top flight routes based on most booked flights in the platform
 // @route   GET /api/searches/flights/top-routes
 // @access  Public
 export const getTopFlightRoutes = async (req: Request, res: Response) => {
   try {
-    const topRoutes = await SeriesFare.aggregate([
-      { 
-        $match: { 
-          status: 'Active', 
-          isArchived: false, 
-          travelDate: { $gte: new Date() } 
-        } 
-      },
-      {
-        $group: {
-          _id: { origin: '$origin', destination: '$destination' },
-          count: { $sum: 1 },
-          minFare: { $min: '$adtFare' }
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          codeFrom: '$_id.origin',
-          codeTo: '$_id.destination',
-          count: 1,
-          startingPrice: '$minFare'
-        }
-      },
-      { $sort: { count: -1 } },
-      { $limit: 9 }
-    ]);
+    const CITY_MAP: Record<string, string> = {
+      'NEW DELHI': 'DEL', 'DELHI': 'DEL', 'DEL': 'DEL',
+      'MUMBAI': 'BOM', 'BOM': 'BOM',
+      'BANGALORE': 'BLR', 'BENGALURU': 'BLR', 'BLR': 'BLR',
+      'GOA': 'GOI', 'GOI': 'GOI', 'GOX': 'GOI',
+      'KOLKATA': 'CCU', 'CALCUTTA': 'CCU', 'CCU': 'CCU',
+      'HYDERABAD': 'HYD', 'HYD': 'HYD',
+      'CHENNAI': 'MAA', 'MADRAS': 'MAA', 'MAA': 'MAA',
+      'JAIPUR': 'JAI', 'JAI': 'JAI',
+      'AHMEDABAD': 'AMD', 'AMD': 'AMD',
+      'PUNE': 'PNQ', 'PNQ': 'PNQ',
+      'CHANDIGARH': 'IXC', 'IXC': 'IXC',
+      'AMRITSAR': 'ATQ', 'ATQ': 'ATQ',
+      'LUCKNOW': 'LKO', 'LKO': 'LKO',
+      'VARANASI': 'VNS', 'VNS': 'VNS',
+      'SRINAGAR': 'SXR', 'SXR': 'SXR',
+      'KOCHI': 'COK', 'COK': 'COK',
+      'DUBAI': 'DXB', 'DXB': 'DXB',
+      'BALI': 'DPS', 'DENPASAR': 'DPS', 'DPS': 'DPS',
+      'BANGKOK': 'BKK', 'BKK': 'BKK',
+      'KUALA LUMPUR': 'KUL', 'KUL': 'KUL',
+      'SINGAPORE': 'SIN', 'SIN': 'SIN',
+      'NAVI MUMBAI': 'NMI', 'NMI': 'NMI'
+    };
 
-    res.json(topRoutes);
+    const CODE_TO_NAME: Record<string, string> = {
+      'DEL': 'Delhi', 'BOM': 'Mumbai', 'BLR': 'Bangalore', 'GOI': 'Goa',
+      'CCU': 'Kolkata', 'HYD': 'Hyderabad', 'MAA': 'Chennai', 'JAI': 'Jaipur',
+      'AMD': 'Ahmedabad', 'PNQ': 'Pune', 'IXC': 'Chandigarh', 'ATQ': 'Amritsar',
+      'LKO': 'Lucknow', 'VNS': 'Varanasi', 'SXR': 'Srinagar', 'COK': 'Kochi',
+      'DXB': 'Dubai', 'DPS': 'Bali', 'BKK': 'Bangkok', 'KUL': 'Kuala Lumpur',
+      'SIN': 'Singapore', 'NMI': 'Navi Mumbai'
+    };
+
+    // 1. Fetch flight bookings from the database to rank the most booked routes
+    const flightBookings = await Booking.find({ 
+      type: 'FLIGHT', 
+      status: { $ne: 'FAILED' } 
+    })
+      .select('details')
+      .lean();
+
+    const routeCounts: Record<string, { codeFrom: string; codeTo: string; from: string; to: string; count: number }> = {};
+
+    for (const b of flightBookings) {
+      let rawFrom = (b.details?.from || (b.details as any)?.origin || '').trim().toUpperCase();
+      let rawTo = (b.details?.to || (b.details as any)?.destination || '').trim().toUpperCase();
+      const from = CITY_MAP[rawFrom] || rawFrom;
+      const to = CITY_MAP[rawTo] || rawTo;
+      if (from && to && from !== to) {
+        const key = `${from}_${to}`;
+        if (!routeCounts[key]) {
+          routeCounts[key] = {
+            codeFrom: from,
+            codeTo: to,
+            from: CODE_TO_NAME[from] || from,
+            to: CODE_TO_NAME[to] || to,
+            count: 0
+          };
+        }
+        routeCounts[key].count += 1;
+      }
+    }
+
+    let topRoutes = Object.values(routeCounts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // If fewer than 10 routes in bookings, supplement with active Series Fares
+    if (topRoutes.length < 10) {
+      const existingKeys = new Set(topRoutes.map(r => `${r.codeFrom}_${r.codeTo}`));
+      
+      const sfRoutes = await SeriesFare.aggregate([
+        { $match: { status: 'Active', isArchived: false, travelDate: { $gte: new Date() } } },
+        { $group: { _id: { origin: '$origin', destination: '$destination' }, count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]);
+
+      for (const sf of sfRoutes) {
+        const from = (sf._id?.origin || '').toUpperCase();
+        const to = (sf._id?.destination || '').toUpperCase();
+        const key = `${from}_${to}`;
+        if (from && to && from !== to && !existingKeys.has(key)) {
+          existingKeys.add(key);
+          topRoutes.push({
+            codeFrom: from,
+            codeTo: to,
+            from: CODE_TO_NAME[from] || from,
+            to: CODE_TO_NAME[to] || to,
+            count: sf.count || 1
+          });
+          if (topRoutes.length >= 10) break;
+        }
+      }
+    }
+
+    res.json(topRoutes.slice(0, 10));
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
