@@ -85,6 +85,17 @@ export const getTicketById = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    // IDOR Authorization Protection
+    const user = (req as any).user;
+    const ticketUserId = (ticket.user as any)?._id ? (ticket.user as any)._id.toString() : ticket.user?.toString();
+    const isOwner = ticketUserId === user?._id?.toString();
+    const isAdmin = Array.isArray(user?.roles) && (user.roles.includes('SUPER_ADMIN') || user.roles.includes('SUB_ADMIN'));
+
+    if (!isOwner && !isAdmin) {
+      res.status(403).json({ success: false, message: 'Access denied: You are not authorized to view this ticket' });
+      return;
+    }
+
     res.status(200).json({ success: true, data: ticket });
   } catch (error: any) {
     console.error('Error in getTicketById:', error);
@@ -97,7 +108,8 @@ export const replyToTicket = async (req: Request, res: Response): Promise<void> 
     const { id } = req.params;
     const { message } = req.body;
     // @ts-ignore
-    const userId = req.user._id;
+    const user = req.user;
+    const userId = user._id;
 
     if (!message) {
       res.status(400).json({ success: false, message: 'Message is required' });
@@ -111,6 +123,16 @@ export const replyToTicket = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    // IDOR Authorization Protection
+    const ticketUserId = ticket.user?.toString();
+    const isOwner = ticketUserId === userId.toString();
+    const isAdmin = Array.isArray(user?.roles) && (user.roles.includes('SUPER_ADMIN') || user.roles.includes('SUB_ADMIN'));
+
+    if (!isOwner && !isAdmin) {
+      res.status(403).json({ success: false, message: 'Access denied: You are not authorized to reply to this ticket' });
+      return;
+    }
+
     ticket.messages.push({
       sender: userId,
       message,
@@ -118,7 +140,6 @@ export const replyToTicket = async (req: Request, res: Response): Promise<void> 
     });
 
     // If admin replies to an Open ticket, we can set it to In Progress
-    // We can check if userId != ticket.user
     if (userId.toString() !== ticket.user.toString() && ticket.status === 'Open') {
       ticket.status = 'In Progress';
     }
@@ -136,22 +157,33 @@ export const updateTicketStatus = async (req: Request, res: Response): Promise<v
   try {
     const { id } = req.params;
     const { status } = req.body;
+    const user = (req as any).user;
 
     if (!status) {
       res.status(400).json({ success: false, message: 'Status is required' });
       return;
     }
 
-    const ticket = await Ticket.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true, runValidators: true }
-    );
-
+    const ticket = await Ticket.findById(id);
     if (!ticket) {
       res.status(404).json({ success: false, message: 'Ticket not found' });
       return;
     }
+
+    // IDOR Protection: Only ticket owner or admin can update status
+    const ticketUserId = ticket.user?.toString();
+    const isOwner = ticketUserId === user?._id?.toString();
+    const isAdmin = Array.isArray(user?.roles) && (user.roles.includes('SUPER_ADMIN') || user.roles.includes('SUB_ADMIN'));
+
+    if (!isOwner && !isAdmin) {
+      res.status(403).json({ success: false, message: 'Access denied: You are not authorized to update this ticket' });
+      return;
+    }
+
+    ticket.status = status;
+    await ticket.save();
+
+    res.status(200).json({ success: true, data: ticket });
 
     res.status(200).json({ success: true, data: ticket });
   } catch (error: any) {

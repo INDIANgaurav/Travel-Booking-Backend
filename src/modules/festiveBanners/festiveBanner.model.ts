@@ -61,3 +61,4 @@ festiveBannerSchema.index({ isActive: 1, priority: -1, createdAt: -1 });
 
 const FestiveBanner = mongoose.model<IFestiveBanner>('FestiveBanner', festiveBannerSchema);
 export default FestiveBanner;
+

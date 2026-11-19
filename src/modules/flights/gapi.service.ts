@@ -91,7 +91,8 @@ export const authenticate = async (): Promise<string> => {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`
-    }
+    },
+    timeout: 30000 // 30s timeout to prevent thread starvation
   });
 
    client.interceptors.response.use(

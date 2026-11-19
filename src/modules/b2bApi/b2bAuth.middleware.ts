@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import B2BClient from './b2bClient.model';
+import B2BRateLimit from './b2bRateLimit.model';
+import { getB2BJwtSecret } from './b2bValidators';
 
-// Extend Express Request to hold the B2B Client info
 declare global {
   namespace Express {
     interface Request {
@@ -12,197 +14,282 @@ declare global {
   }
 }
 
-// In-memory partner rate limiting tracker: clientId -> { count, resetTime }
-const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+type RateBucketScope = 'token' | 'search' | 'booking' | 'default';
 
-// Periodic garbage collection every 10 minutes for inactive clients
-setInterval(() => {
-  const now = Date.now();
-  for (const [clientId, usage] of rateLimitMap.entries()) {
-    if (now > usage.resetTime) {
-      rateLimitMap.delete(clientId);
+const BUCKET_WINDOW_MS = 60 * 1000; // 1-minute atomic fixed time bucket
+const memoryFallback = new Map<string, { count: number; resetAt: Date }>();
+
+export const normalizeClientIp = (req: Request): string => {
+  const raw = req.ip || req.socket?.remoteAddress || 'unknown';
+  return raw.replace(/^::ffff:/, '').trim() || 'unknown';
+};
+
+const sendAuthError = (res: Response, status: number, code: string, message: string, details?: any[]) => {
+  return res.status(status).json({
+    success: false,
+    statusCode: status,
+    error: {
+      code,
+      message,
+      ...(details ? { details } : {}),
+    },
+    meta: {
+      timestamp: new Date().toISOString(),
+    },
+  });
+};
+
+const resolveEndpointScope = (req: Request): RateBucketScope => {
+  const path = `${req.baseUrl}${req.path}`.toLowerCase();
+  if (path.includes('/flights/book')) return 'booking';
+  if (path.includes('/search') || path.includes('/sectors')) return 'search';
+  if (path.includes('/oauth2/tokens') || path.includes('/auth/token')) return 'token';
+  return 'default';
+};
+
+const resolveLimitForScope = (client: any, scope: RateBucketScope): number => {
+  if (scope === 'booking') return Number(client.bookingRateLimitPerMinute) || 30;
+  if (scope === 'search') return Number(client.searchRateLimitPerMinute) || Math.max(Number(client.rateLimitPerMinute) || 60, 300);
+  if (scope === 'token') return Number(client.tokenRateLimitPerMinute) || 10;
+  return Number(client.rateLimitPerMinute) || 60;
+};
+
+/**
+ * Single-document atomic counter + time-bucket limiter stored in MongoDB (no Redis).
+ * TTL index automatically sweeps expired bucket documents.
+ */
+async function incrementAtomicRateBucket(
+  scope: RateBucketScope,
+  identifier: string,
+  limit: number
+): Promise<{ allowed: boolean; limit: number; remaining: number; resetAt: Date }> {
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / BUCKET_WINDOW_MS);
+  const resetAt = new Date((bucket + 1) * BUCKET_WINDOW_MS);
+  const scopedKey = `b2b:${scope}:${identifier}:${bucket}`;
+
+  if (mongoose.connection.readyState === 1) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const doc = await B2BRateLimit.findOneAndUpdate(
+          { key: scopedKey },
+          {
+            $inc: { count: 1 },
+            $setOnInsert: { key: scopedKey, resetAt },
+          },
+          { upsert: true, new: true }
+        ).lean();
+
+        const count = doc?.count || 1;
+        return {
+          allowed: count <= limit,
+          limit,
+          remaining: Math.max(0, limit - count),
+          resetAt,
+        };
+      } catch (err: any) {
+        if (err?.code === 11000 && attempt === 0) continue;
+        throw err;
+      }
     }
   }
-}, 10 * 60 * 1000);
 
-const checkRateLimit = (client: any): { allowed: boolean; limit: number; remaining: number; resetTime: number } => {
-  const clientId = client._id.toString();
-  const limit = client.rateLimitPerMinute || 60;
-  const now = Date.now();
-
-  const usage = rateLimitMap.get(clientId);
-  if (!usage || now > usage.resetTime) {
-    const resetTime = now + 60000;
-    rateLimitMap.set(clientId, { count: 1, resetTime });
-    return { allowed: true, limit, remaining: limit - 1, resetTime };
+  // Fallback only when MongoDB is disconnected
+  const existing = memoryFallback.get(scopedKey);
+  if (existing && existing.resetAt.getTime() > nowMs) {
+    existing.count += 1;
+    return {
+      allowed: existing.count <= limit,
+      limit,
+      remaining: Math.max(0, limit - existing.count),
+      resetAt: existing.resetAt,
+    };
   }
 
-  if (usage.count >= limit) {
-    return { allowed: false, limit, remaining: 0, resetTime: usage.resetTime };
+  memoryFallback.set(scopedKey, { count: 1, resetAt });
+  return { allowed: true, limit, remaining: Math.max(0, limit - 1), resetAt };
+}
+
+async function applyPartnerRateLimit(req: Request, res: Response, client: any): Promise<boolean> {
+  const scope = resolveEndpointScope(req);
+  const limit = resolveLimitForScope(client, scope);
+  const result = await incrementAtomicRateBucket(scope, client._id.toString(), limit);
+  const retryAfterSec = Math.max(1, Math.ceil((result.resetAt.getTime() - Date.now()) / 1000));
+
+  res.setHeader('X-RateLimit-Limit', String(result.limit));
+  res.setHeader('X-RateLimit-Remaining', String(result.remaining));
+  res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetAt.getTime() / 1000)));
+  res.setHeader('X-RateLimit-Scope', scope);
+
+  if (!result.allowed) {
+    res.setHeader('Retry-After', String(retryAfterSec));
+    sendAuthError(
+      res,
+      429,
+      'RATE_LIMIT_EXCEEDED',
+      `Rate limit of ${result.limit} req/min for ${scope} exceeded. Please retry after ${retryAfterSec}s.`,
+      [{ scope, limit: result.limit, retryAfterSeconds: retryAfterSec }]
+    );
+    return false;
   }
 
-  usage.count++;
-  return { allowed: true, limit, remaining: limit - usage.count, resetTime: usage.resetTime };
+  return true;
+}
+
+/**
+ * Brute-force rate limiter for token issuance endpoints (/oauth2/tokens & /auth/token).
+ */
+export const b2bTokenRateLimiter = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const ip = normalizeClientIp(req);
+    const ipLimit = 10;
+    const result = await incrementAtomicRateBucket('token', `ip:${ip}`, ipLimit);
+    const retryAfterSec = Math.max(1, Math.ceil((result.resetAt.getTime() - Date.now()) / 1000));
+
+    res.setHeader('X-RateLimit-Limit', String(result.limit));
+    res.setHeader('X-RateLimit-Remaining', String(result.remaining));
+    res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetAt.getTime() / 1000)));
+
+    if (!result.allowed) {
+      res.setHeader('Retry-After', String(retryAfterSec));
+      return sendAuthError(
+        res,
+        429,
+        'RATE_LIMIT_EXCEEDED',
+        `Too many token requests from IP ${ip}. Please retry after ${retryAfterSec}s.`,
+        [{ limit: result.limit, retryAfterSeconds: retryAfterSec }]
+      );
+    }
+
+    return next();
+  } catch (err) {
+    console.error('B2B token rate limit error:', err);
+    return next();
+  }
 };
+
+/**
+ * Shared authorization pipeline executed identically for both JWT Bearer and x-api-key auth:
+ * Status check -> Environment check -> IP Allowlist -> Persistent Rate Limit.
+ */
+async function authorizePartnerRequest(
+  req: Request,
+  res: Response,
+  client: any,
+  isLiveMode: boolean
+): Promise<boolean> {
+  if (client.status === 'Suspended') {
+    sendAuthError(res, 403, 'ACCOUNT_SUSPENDED', 'Your API access has been suspended. Please contact technical support.');
+    return false;
+  }
+
+  if (client.status === 'Pending' || (client.status !== 'Testing' && client.status !== 'Live')) {
+    sendAuthError(res, 403, 'PARTNER_NOT_ACTIVE', 'Your partner account is pending activation and cannot access the API yet.');
+    return false;
+  }
+
+  if (isLiveMode && client.status !== 'Live') {
+    sendAuthError(
+      res,
+      403,
+      'ENVIRONMENT_MISMATCH',
+      'Live production credentials cannot be used while partner account is in Testing status.'
+    );
+    return false;
+  }
+
+  const clientIp = normalizeClientIp(req);
+  if (Array.isArray(client.allowedIPs) && client.allowedIPs.length > 0) {
+    const normalizedAllowed = client.allowedIPs.map((ip: string) => ip.replace(/^::ffff:/, '').trim());
+    if (!normalizedAllowed.includes(clientIp)) {
+      sendAuthError(res, 403, 'IP_NOT_WHITELISTED', `IP address ${clientIp} is not whitelisted for this partner account.`);
+      return false;
+    }
+  }
+
+  const withinRate = await applyPartnerRateLimit(req, res, client);
+  if (!withinRate) return false;
+
+  req.b2bClient = client;
+  req.isLiveMode = isLiveMode;
+  return true;
+}
 
 export const protectB2BApi = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const tokenHeader = req.header('tokenId') || req.header('token') || (req.query.tokenId as string) || (req.query.token as string);
-    const authHeader = req.header('authorization');
-    const apiKeyHeader = req.header('x-api-key') || (req.query.apiKey as string) || (req.query['x-api-key'] as string);
-
-    let token = tokenHeader;
-    if (!token && authHeader) {
-      token = authHeader;
+    // Reject credentials supplied in URL query parameters to prevent log leakage
+    if (req.query.token || req.query.tokenId || req.query.apiKey || req.query['x-api-key']) {
+      return sendAuthError(
+        res,
+        401,
+        'QUERY_CREDENTIALS_NOT_ALLOWED',
+        'Passing API keys or tokens in URL query parameters is disabled. Use Authorization or x-api-key headers.'
+      );
     }
 
+    const tokenHeader = req.header('tokenId') || req.header('token');
+    const authHeader = req.header('authorization');
+    const apiKeyHeader = req.header('x-api-key');
+
+    let token = tokenHeader || (authHeader && /^Bearer\s+/i.test(authHeader) ? authHeader : '');
     if (token) {
       token = token.replace(/Bearer\s+/gi, '').replace(/^["']|["']$/g, '').trim();
     }
 
-    // Helper for error envelope
-    const sendAuthError = (status: number, code: string, message: string) => {
-      return res.status(status).json({
-        success: false,
-        statusCode: status,
-        error: {
-          code,
-          message
-        },
-        meta: {
-          timestamp: new Date().toISOString()
-        }
-      });
-    };
-
-    // CASE A: Token provided (GAPI / OAuth Bearer Standard)
+    // MODE A: Bearer JWT Authentication
     if (token) {
-      const secret = process.env.JWT_SECRET || 'trippechalo_jwt_super_secret_key_2026';
+      const secret = getB2BJwtSecret();
       try {
-        const decoded: any = jwt.verify(token, secret);
+        const decoded: any = jwt.verify(token, secret, {
+          algorithms: ['HS256'],
+          issuer: 'trippechalo-auth',
+          audience: 'trippechalo-b2b-api',
+        });
+
         const client = await B2BClient.findById(decoded.clientId);
-
         if (!client) {
-          return sendAuthError(401, 'UNAUTHORIZED', 'Invalid session token. Client record not found.');
+          return sendAuthError(res, 401, 'UNAUTHORIZED', 'Invalid session token. Client record not found.');
         }
 
-        if (client.status === 'Suspended') {
-          return sendAuthError(403, 'ACCOUNT_SUSPENDED', 'Your API access has been suspended. Please contact technical support.');
+        if ((decoded.tokenVersion ?? 0) !== (client.tokenVersion ?? 0)) {
+          return sendAuthError(res, 401, 'TOKEN_REVOKED', 'Session token has been revoked. Please generate a new token.');
         }
 
-        // Enforce Rate Limiting
-        const rateCheck = checkRateLimit(client);
-        res.setHeader('X-RateLimit-Limit', rateCheck.limit);
-        res.setHeader('X-RateLimit-Remaining', Math.max(0, rateCheck.remaining));
-        res.setHeader('X-RateLimit-Reset', Math.ceil(rateCheck.resetTime / 1000));
+        const isLive = decoded.env ? decoded.env === 'PRODUCTION' : Boolean(decoded.isLive);
+        const ok = await authorizePartnerRequest(req, res, client, isLive);
+        if (!ok) return;
 
-        if (!rateCheck.allowed) {
-          const retryAfterSec = Math.max(1, Math.ceil((rateCheck.resetTime - Date.now()) / 1000));
-          res.setHeader('Retry-After', retryAfterSec);
-          return res.status(429).json({
-            success: false,
-            statusCode: 429,
-            error: {
-              code: 'RATE_LIMIT_EXCEEDED',
-              message: `Rate limit of ${rateCheck.limit} req/min exceeded. Please throttle your requests and retry after ${retryAfterSec}s.`,
-              details: [{ limit: rateCheck.limit, retryAfterSeconds: retryAfterSec }]
-            },
-            meta: {
-              timestamp: new Date().toISOString()
-            }
-          });
-        }
-
-        req.b2bClient = client;
-        req.isLiveMode = Boolean(decoded.isLive);
         return next();
       } catch (err: any) {
-        return sendAuthError(401, 'INVALID_TOKEN', `Session token invalid (${err.message}). Please re-authenticate via /oauth2/tokens`);
+        return sendAuthError(res, 401, 'INVALID_TOKEN', `Session token invalid (${err.message}). Please re-authenticate via /oauth2/tokens`);
       }
     }
 
-    // CASE B: Direct API Key provided
-    const apiKey = apiKeyHeader;
-    if (!apiKey) {
+    // MODE B: Direct API Key Header Authentication
+    if (!apiKeyHeader) {
       return sendAuthError(
+        res,
         401,
         'UNAUTHORIZED',
-        'Authentication required. Please provide "Authorization: Bearer <token>" or "x-api-key" in headers.'
+        'Authentication required. Please provide "Authorization: Bearer <token>" or "x-api-key" header.'
       );
     }
 
-    // Look for the key in either test or live fields
     const client = await B2BClient.findOne({
-      $or: [{ testApiKey: apiKey }, { liveApiKey: apiKey }]
+      $or: [{ testApiKey: apiKeyHeader }, { liveApiKey: apiKeyHeader }],
     });
 
     if (!client) {
-      return sendAuthError(401, 'INVALID_API_KEY', 'The provided API Key is invalid or not registered.');
+      return sendAuthError(res, 401, 'INVALID_API_KEY', 'The provided API Key is invalid or not registered.');
     }
 
-    if (client.status === 'Suspended') {
-      return sendAuthError(403, 'ACCOUNT_SUSPENDED', 'Your API access has been suspended. Please contact technical support.');
-    }
+    const isLive = client.liveApiKey === apiKeyHeader;
+    const ok = await authorizePartnerRequest(req, res, client, isLive);
+    if (!ok) return;
 
-    const isLive = client.liveApiKey === apiKey;
-
-    // If they use a live key but their status is not live yet
-    if (isLive && client.status !== 'Live') {
-      return sendAuthError(
-        403,
-        'SANDBOX_ONLY',
-        'Your account is in Testing status. Please use your Sandbox API key or contact support for live activation.'
-      );
-    }
-
-    // IP Whitelisting Check
-    const clientIp = req.ip || req.connection.remoteAddress;
-    if (client.allowedIPs && client.allowedIPs.length > 0 && clientIp) {
-      if (!client.allowedIPs.includes(clientIp)) {
-        return sendAuthError(403, 'IP_NOT_WHITELISTED', `IP address ${clientIp} is not whitelisted for this API key.`);
-      }
-    }
-
-    // Enforce Rate Limiting
-    const rateCheck = checkRateLimit(client);
-    res.setHeader('X-RateLimit-Limit', rateCheck.limit);
-    res.setHeader('X-RateLimit-Remaining', Math.max(0, rateCheck.remaining));
-    res.setHeader('X-RateLimit-Reset', Math.ceil(rateCheck.resetTime / 1000));
-
-    if (!rateCheck.allowed) {
-      const retryAfterSec = Math.max(1, Math.ceil((rateCheck.resetTime - Date.now()) / 1000));
-      res.setHeader('Retry-After', retryAfterSec);
-      return res.status(429).json({
-        success: false,
-        statusCode: 429,
-        error: {
-          code: 'RATE_LIMIT_EXCEEDED',
-          message: `Rate limit of ${rateCheck.limit} req/min exceeded. Please throttle your requests and retry after ${retryAfterSec}s.`,
-          details: [{ limit: rateCheck.limit, retryAfterSeconds: retryAfterSec }]
-        },
-        meta: {
-          timestamp: new Date().toISOString()
-        }
-      });
-    }
-
-    // Attach to request
-    req.b2bClient = client;
-    req.isLiveMode = isLive;
-
-    next();
+    return next();
   } catch (error: any) {
     console.error('B2B Auth Error:', error);
-    res.status(500).json({
-      success: false,
-      statusCode: 500,
-      error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: error.message || 'Internal Server Error during Authentication'
-      },
-      meta: {
-        timestamp: new Date().toISOString()
-      }
-    });
+    return sendAuthError(res, 500, 'INTERNAL_SERVER_ERROR', error.message || 'Internal Server Error during Authentication');
   }
 };

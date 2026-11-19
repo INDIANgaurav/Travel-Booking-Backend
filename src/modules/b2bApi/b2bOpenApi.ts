@@ -686,7 +686,7 @@ export const getPostmanCollection = (partner?: any, isLive: boolean = false, bas
   const company = partner?.companyName || 'B2B Partner';
   const apiKey = isLive ? partner?.liveApiKey || 'tc_live_your_key' : partner?.testApiKey || 'tc_test_your_key';
   const username = partner?.username || 'partner_b2b';
-  const password = partner?.password || 'PartnerPass2026!';
+  const password = partner?.password || 'YOUR_PASSWORD';
 
   return {
     info: {

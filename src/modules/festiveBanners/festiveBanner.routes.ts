@@ -25,3 +25,4 @@ router.delete('/:id', deleteBanner);
 router.patch('/:id/toggle', toggleBannerStatus);
 
 export default router;
+

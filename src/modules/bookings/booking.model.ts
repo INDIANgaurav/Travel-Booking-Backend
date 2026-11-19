@@ -6,6 +6,9 @@ export interface IBooking extends Document {
   type: 'FLIGHT' | 'HOTEL' | 'PACKAGE' | 'BUS';
   status: 'INITIATED' | 'PAYMENT_PENDING' | 'TICKETING_IN_PROGRESS' | 'CONFIRMED' | 'FAILED_REFUNDING' | 'FAILED' | 'CANCEL_PENDING' | 'PARTIALLY_CANCELLED' | 'CANCELLED';
   idempotencyKey?: string;
+  checkoutFingerprint?: string;
+  passengerFingerprint?: string;
+  flightFingerprint?: string;
   totalAmount: number;
   date: string;
   isTestBooking?: boolean;
@@ -22,6 +25,7 @@ export interface IBooking extends Document {
   cancelledAt?: Date;
   refundStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'NONE';
   refundAmount?: number;
+  refundId?: string;
   cancellationPenalty?: number;
   platformFee?: number;
 
@@ -33,11 +37,16 @@ export interface IBooking extends Document {
     destination?: string;
     clientBookingRef?: string;
     idempotencyKey?: string;
+  checkoutFingerprint?: string;
+  passengerFingerprint?: string;
+  flightFingerprint?: string;
     passengers?: Array<{ name: string; gender: string; type: string; dob?: string; passportNum?: string; passportExpiry?: string; nationality?: string; status?: 'CONFIRMED' | 'CANCEL_PENDING' | 'CANCELLED' }>;
     contactDetails?: { email: string; phone: string; countryCode: string };
     seats?: string[];
     flightId?: mongoose.Types.ObjectId;
     pnr?: string;
+    groupPnr?: string;
+    bookingReference?: string;
     isGapiFare?: boolean;
     isSeriesFare?: boolean;
     isAirIqFare?: boolean;
@@ -79,6 +88,9 @@ const bookingSchema = new Schema<IBooking>(
     type: { type: String, enum: ['FLIGHT', 'HOTEL', 'PACKAGE', 'BUS'], required: true },
     status: { type: String, enum: ['INITIATED', 'PAYMENT_PENDING', 'TICKETING_IN_PROGRESS', 'CONFIRMED', 'FAILED_REFUNDING', 'FAILED', 'CANCEL_PENDING', 'PARTIALLY_CANCELLED', 'CANCELLED'], default: 'INITIATED' },
     idempotencyKey: { type: String, sparse: true, unique: true },
+    checkoutFingerprint: { type: String, sparse: true, index: true },
+    passengerFingerprint: { type: String, sparse: true },
+    flightFingerprint: { type: String, sparse: true, index: true },
     bookingMode: { type: String, enum: ['PERSONAL', 'MYBIZ'], default: 'PERSONAL' },
     isTestBooking: { type: Boolean, default: false, index: true },
     paymentMethod: { type: String, enum: ['RAZORPAY', 'WALLET'], default: 'RAZORPAY' },
@@ -95,6 +107,7 @@ const bookingSchema = new Schema<IBooking>(
     cancelledAt: { type: Date },
     refundStatus: { type: String, enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'NONE'], default: 'NONE' },
     refundAmount: { type: Number },
+    refundId: { type: String },
     cancellationPenalty: { type: Number },
     platformFee: { type: Number },
 
@@ -159,6 +172,7 @@ bookingSchema.index({ 'details.pnr': 1 });
 bookingSchema.index({ 'details.b2bClientId': 1 });
 bookingSchema.index({ 'details.flight_keys': 1 });
 bookingSchema.index({ createdAt: -1 });
+bookingSchema.index({ razorpayOrderId: 1 }, { sparse: true });
 
 const Booking = mongoose.model<IBooking>('Booking', bookingSchema);
 export default Booking;

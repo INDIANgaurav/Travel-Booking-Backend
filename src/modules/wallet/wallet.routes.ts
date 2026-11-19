@@ -7,7 +7,13 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/', getWallet);
-router.post('/add', addMoney);
+// Secure endpoint: Direct balance modification is forbidden.
+// Admin recharges must strictly use /api/wallet/admin/recharge
+router.post('/add', (req, res) => {
+  res.status(403).json({
+    message: 'Direct balance addition is forbidden. Please use verified online payment top-up or official admin recharge.'
+  });
+});
 router.post('/create-order', createTopUpOrder);
 router.post('/verify-payment', verifyTopUpPayment);
 

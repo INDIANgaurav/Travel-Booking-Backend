@@ -3,7 +3,7 @@ import { AuthRequest } from '../../middleware/auth.middleware';
 import RecentSearch from './search.model';
 import Flight from '../inventory/flight.model';
 import { searchFlightsNexus, checkAvailability } from '../flights/nexusdmc.service';
-import { searchFlightsAirIq, getAvailableSectorsAirIq } from '../flights/airiq.service';
+import { searchFlightsAirIq, getAvailableSectorsAirIq, getAvailableDatesAirIq } from '../flights/airiq.service';
 import jwt from 'jsonwebtoken';
 import { searchFlights as searchFlightsGapi } from '../flights/gapi.service';
 import User from '../users/user.model';
@@ -12,8 +12,92 @@ import Booking from '../bookings/booking.model';
 import Supplier from '../supplier/supplier.model';
 import { Request } from 'express';
 
-// In-memory cache for flight search results
-const flightSearchCache = new Map<string, { data: any, timestamp: number }>();
+// Memory-Bounded LRU Cache to strictly prevent Out-Of-Memory (OOM) heap exhaustion
+interface CacheEntry<V> {
+  value: V;
+  sizeBytes: number;
+}
+
+class BoundedLRUCache<K, V> {
+  private maxItems: number;
+  private maxBytes: number;
+  private currentBytes: number;
+  private map: Map<K, CacheEntry<V>>;
+
+  constructor(maxItems: number = 150, maxBytes: number = 50 * 1024 * 1024) {
+    this.maxItems = maxItems;
+    this.maxBytes = maxBytes; // 50MB ceiling
+    this.currentBytes = 0;
+    this.map = new Map<K, CacheEntry<V>>();
+  }
+
+  get(key: K): V | undefined {
+    const entry = this.map.get(key);
+    if (entry) {
+      this.map.delete(key);
+      this.map.set(key, entry);
+      return entry.value;
+    }
+    return undefined;
+  }
+
+  set(key: K, value: V): void {
+    const itemString = JSON.stringify(value);
+    const sizeBytes = Buffer.byteLength(itemString, 'utf8');
+
+    if (this.map.has(key)) {
+      const existing = this.map.get(key)!;
+      this.currentBytes -= existing.sizeBytes;
+      this.map.delete(key);
+    }
+
+    while (
+      (this.map.size >= this.maxItems || (this.currentBytes + sizeBytes > this.maxBytes)) &&
+      this.map.size > 0
+    ) {
+      const oldestKey = this.map.keys().next().value;
+      if (oldestKey !== undefined) {
+        const oldestEntry = this.map.get(oldestKey)!;
+        this.currentBytes -= oldestEntry.sizeBytes;
+        this.map.delete(oldestKey);
+      }
+    }
+
+    if (sizeBytes <= this.maxBytes) {
+      this.map.set(key, { value, sizeBytes });
+      this.currentBytes += sizeBytes;
+    }
+  }
+
+  clear(): void {
+    this.map.clear();
+    this.currentBytes = 0;
+  }
+
+  size(): number {
+    return this.map.size;
+  }
+
+  memoryUsage(): { items: number; bytes: number; maxBytes: number } {
+    return {
+      items: this.map.size,
+      bytes: this.currentBytes,
+      maxBytes: this.maxBytes,
+    };
+  }
+}
+
+// In-memory cache capped at 150 search result sets and 50MB max heap memory
+const flightSearchCache = new BoundedLRUCache<string, { data: any, timestamp: number }>(150, 50 * 1024 * 1024);
+
+/**
+ * TEMPORARY TOGGLE: If AIRIQ_ONLY_MODE is true in environment,
+ * block manual FD (Series Fares), Nexus DMC, GAPI, and DB Inventory flights,
+ * ensuring search returns ONLY AirIQ flights.
+ */
+export const isAirIqOnlyMode = (): boolean => {
+  return process.env.AIRIQ_ONLY_MODE === 'true';
+};
 
 // @desc    Get recent searches for user
 // @route   GET /api/searches/recent
@@ -162,6 +246,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       airIqSupplier = await Supplier.findOne({ name: { $in: ['Air Iq', 'AirIQ', 'AIRIQ'] } }).lean();
     } catch(e) {}
 
+    if (isAirIqOnlyMode() && !airIqSupplier) {
+      airIqSupplier = {
+        name: 'Air Iq',
+        isActive: true,
+        searchEnabled: true,
+        commission: { percentage: 0, fixedAmount: 0 }
+      };
+    }
+
     let commissionPolicies: any[] = [];
     try {
       const CommissionPlan = require('../commissions/commission.model').CommissionPlan;
@@ -268,7 +361,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     };
 
     let searchResult: any = null;
-    if (nexusSupplier && nexusSupplier.isActive) {
+    if (!isAirIqOnlyMode() && nexusSupplier && nexusSupplier.isActive) {
       try {
         searchResult = await searchFlightsNexus(segment, pax);
       } catch (err: any) {
@@ -349,8 +442,9 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     }
 
     // Merge active Series Fares matching route
-    try {
-      const SeriesFare = require('../seriesFare/seriesFare.model').default;
+    if (!isAirIqOnlyMode()) {
+      try {
+        const SeriesFare = require('../seriesFare/seriesFare.model').default;
       
       const dateStr = (targetDate instanceof Date && !isNaN(targetDate.getTime()))
         ? targetDate.toISOString().split('T')[0]
@@ -358,7 +452,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
 
       const exactDayStart = new Date(`${dateStr}T00:00:00.000Z`);
       const startOfDay = new Date(exactDayStart.getTime() - (6 * 3600 * 1000)); // covers IST midnight (18:30 UTC previous day)
-      const endOfDay = new Date(exactDayStart.getTime() + (26 * 3600 * 1000));  // covers full day and IST boundaries
+      const endOfDay = new Date(exactDayStart.getTime() + (23 * 3600 * 1000 + 59 * 60 * 1000));  // strictly ends before next day 00:00 UTC
 
       const paxCount = adultCount + childCount;
       const isTestMode = queryParams.isTestFlight === 'true' || queryParams.sandbox === 'true' || queryParams.mode === 'TEST';
@@ -571,16 +665,18 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     } catch (sfErr) {
       console.error("Error fetching series fares:", sfErr);
     }
+  }
 
     // Merge active GAPI Fares matching route
     let gapiSearchResult: any[] = [];
-    try {
-      if (gapiSupplier && gapiSupplier.isActive) {
-        gapiSearchResult = await searchFlightsGapi({ query: queryParams });
+    if (!isAirIqOnlyMode()) {
+      try {
+        if (gapiSupplier && gapiSupplier.isActive) {
+          gapiSearchResult = await searchFlightsGapi({ query: queryParams });
+        }
+      } catch (err: any) {
+        console.warn("[GAPI] Live fare search unavailable:", err.message || err);
       }
-    } catch (err: any) {
-      console.warn("[GAPI] Live fare search unavailable:", err.message || err);
-    }
     
     if (gapiSearchResult && gapiSearchResult.length > 0) {
       // Map GAPI 2D array response to flights
@@ -778,9 +874,11 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         return f;
       });
     }
+  }
 
     // Merge active AirIQ Fares matching route
-    if (airIqSupplier && airIqSupplier.isActive && (airIqSupplier.searchEnabled !== false)) {
+    const shouldSearchAirIq = airIqSupplier && (isAirIqOnlyMode() || (airIqSupplier.isActive && (airIqSupplier.searchEnabled !== false)));
+    if (shouldSearchAirIq) {
       try {
         const yyyy = targetDate.getFullYear();
         const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
@@ -793,7 +891,8 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           departure_date: airIqDepDate,
           adult: adultCount,
           child: childCount,
-          infant: infantCount
+          infant: infantCount,
+          airline_code: queryParams.airline || queryParams.airlineCode
         });
 
         if (airIqResult && (airIqResult.status === 'success' || airIqResult.code === '200') && Array.isArray(airIqResult.data)) {
@@ -830,6 +929,24 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
             const totalPrice = Math.round(basePrice + finalCommission + revPolicy.markup + agentMarkup);
             const perPaxMarkup = (finalCommission + revPolicy.markup + agentMarkup) / Math.max(1, (adultCount + childCount));
 
+            const adultTotal = Math.round(Number(flight.price || 0) + perPaxMarkup);
+            const baseFarePerPax = Math.round(adultTotal * 0.72);
+            const taxesPerPax = adultTotal - baseFarePerPax;
+            const fuelSurcharge = Math.round(taxesPerPax * 0.58);
+            const airportDevelopmentFee = Math.round(taxesPerPax * 0.24);
+            const govtTaxes = taxesPerPax - fuelSurcharge - airportDevelopmentFee;
+
+            const formatBaggage = (val: any, fallbackKg: number): string => {
+              if (!val) return `${fallbackKg} Kg`;
+              const s = String(val).trim();
+              const num = parseInt(s, 10);
+              if (!isNaN(num) && num > 0) return `${num} Kg`;
+              return s.endsWith('Kg') || s.endsWith('kg') ? s : `${s} Kg`;
+            };
+
+            const chkInBag = formatBaggage(flight.cabin_baggage, 15);
+            const cabBag = formatBaggage(flight.hand_luggage, 7);
+
             return {
               _id: `AIRIQ_${flight.ticket_id}`,
               airline: flight.airline || 'AirIQ Partner',
@@ -846,11 +963,20 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
               price: totalPrice,
               stops: (flight.flight_route || '').toLowerCase().includes('non') ? 0 : 1,
               seatsAvailable: flight.pax || 9,
-              adultPrice: Math.round(Number(flight.price || 0) + perPaxMarkup),
+              adultPrice: adultTotal,
               childPrice: Math.round(Number(flight.price || 0) + perPaxMarkup),
               infantPrice: Number(flight.infant_price || 2250),
-              checkinBaggage: `${flight.cabin_baggage || 15} Kg`,
-              cabinBaggage: `${flight.hand_luggage || 7} Kg`,
+              baseFare: baseFarePerPax * adultCount,
+              baseFarePerPax,
+              taxes: taxesPerPax * adultCount,
+              taxesPerPax,
+              taxBreakdown: {
+                fuelSurcharge: fuelSurcharge * adultCount,
+                airportDevelopmentFee: airportDevelopmentFee * adultCount,
+                govtTaxes: govtTaxes * adultCount
+              },
+              checkinBaggage: chkInBag,
+              cabinBaggage: cabBag,
               cabinClass: 'Economy',
               refundable: 'Non Refundable',
               isAirIqFare: true,
@@ -858,14 +984,33 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
               airIq_raw: flight,
               supplierId: airIqSupplier?._id,
               supplierObj: airIqSupplier,
-              fareRules: [{ fareRuleDetail: 'AirIQ Series Fare: Fixed departure inventory. Non-refundable and non-changeable once ticketed.' }]
+              fareRules: [
+                {
+                  ruleType: 'CANCELLATION',
+                  fareRuleDetail: 'AirIQ Series Fare (Fixed Departure): Strictly 100% Non-Refundable upon cancellation. No refund of base fare or fuel surcharges as per airline contract terms.'
+                },
+                {
+                  ruleType: 'DATE_CHANGE',
+                  fareRuleDetail: 'Date Change & Rescheduling: Date change and name change are not permitted on Series / Group promotional block inventory.'
+                },
+                {
+                  ruleType: 'BAGGAGE',
+                  fareRuleDetail: `Baggage Allowance: Cabin Baggage: ${cabBag} / pax | Check-in Baggage: ${chkInBag} / pax. Excess baggage can be purchased at airport check-in counters.`
+                },
+                {
+                  ruleType: 'SEATS_MEALS',
+                  fareRuleDetail: 'Seats & Meals: Standard economy seats are assigned at airport check-in or via airline web check-in. Paid meals can be pre-booked directly on the airline portal.'
+                }
+              ]
             };
           });
 
-          // Filter AirIQ flights based on CUG mappings
-          airIqFlights = airIqFlights.filter((f: any) => 
-            isFlightAllowedByCUG(f.supplierObj, f.airline) || isFlightAllowedByCUG(f.supplierObj, f.airlineCode)
-          );
+          // Filter AirIQ flights based on CUG mappings (skip in AirIQ-only mode for direct testing)
+          if (!isAirIqOnlyMode()) {
+            airIqFlights = airIqFlights.filter((f: any) => 
+              isFlightAllowedByCUG(f.supplierObj, f.airline) || isFlightAllowedByCUG(f.supplierObj, f.airlineCode)
+            );
+          }
 
           // Cleanup temporary object
           airIqFlights = airIqFlights.map((f: any) => {
@@ -874,36 +1019,40 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           });
 
           flights = [...flights, ...airIqFlights];
+        } else if (airIqResult?.message) {
+          console.log(`[AirIQ Search] Sector ${originIata}->${destinationIata} on ${airIqDepDate}: ${airIqResult.message}`);
         }
       } catch (airIqErr: any) {
-        console.warn('[AirIQ] Live fare search unavailable:', airIqErr.message || airIqErr);
+        console.warn('[AirIQ] Live fare search unavailable:', airIqErr.response?.data?.message || airIqErr.message || airIqErr);
       }
     }
 
     // Merge standard Inventory Flights matching route
-    try {
-      const exactDayStart = new Date(targetDate);
-      exactDayStart.setUTCHours(0, 0, 0, 0);
-      const startOfDay = new Date(exactDayStart.getTime() - (6 * 3600 * 1000));
-      const endOfDay = new Date(exactDayStart.getTime() + (26 * 3600 * 1000));
+    if (!isAirIqOnlyMode()) {
+      try {
+        const exactDayStart = new Date(targetDate);
+        exactDayStart.setUTCHours(0, 0, 0, 0);
+        const startOfDay = new Date(exactDayStart.getTime() - (6 * 3600 * 1000));
+        const endOfDay = new Date(exactDayStart.getTime() + (23 * 3600 * 1000 + 59 * 60 * 1000));
 
-      const dbFilter: any = {
-        departureAirportCode: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
-        arrivalAirportCode: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
-        departureTime: { $gte: startOfDay, $lte: endOfDay }
-      };
+        const dbFilter: any = {
+          departureAirportCode: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
+          arrivalAirportCode: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
+          departureTime: { $gte: startOfDay, $lte: endOfDay }
+        };
 
-      const dbFlights = await Flight.find(dbFilter).lean();
-      
-      const dbMapped = dbFlights.map((f: any) => ({
-        ...f,
-        price: f.price * (adultCount + childCount) + (infantCount > 0 ? (f.price * 0.2 * infantCount) : 0), // Simple pax calculation
-        isInventoryFare: true
-      }));
+        const dbFlights = await Flight.find(dbFilter).lean();
+        
+        const dbMapped = dbFlights.map((f: any) => ({
+          ...f,
+          price: f.price * (adultCount + childCount) + (infantCount > 0 ? (f.price * 0.2 * infantCount) : 0), // Simple pax calculation
+          isInventoryFare: true
+        }));
 
-      flights = [...dbMapped, ...flights];
-    } catch (dbErr) {
-      console.error("Error fetching standard db flights:", dbErr);
+        flights = [...dbMapped, ...flights];
+      } catch (dbErr) {
+        console.error("Error fetching standard db flights:", dbErr);
+      }
     }
 
     // Apply filters
@@ -1069,8 +1218,8 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
     const admin = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
     const expiryMins = admin?.resultExpiryTime || 20; // Default 20 mins
 
-    // Create unique cache key based on query params and user context
-    const cacheKey = JSON.stringify({ ...req.query, isAgent, agentId });
+    // Create unique cache key based on query params, user context, and supplier mode
+    const cacheKey = JSON.stringify({ ...req.query, isAgent, agentId, airIqOnly: isAirIqOnlyMode() });
     const cachedResult = flightSearchCache.get(cacheKey);
 
     if (cachedResult && (Date.now() - cachedResult.timestamp < expiryMins * 60 * 1000)) {
@@ -1232,21 +1381,21 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
 
     // 1. Fetch from Series Fares
     const SeriesFare = require('../seriesFare/seriesFare.model').default;
-    const sfFlights = await SeriesFare.find({
+    const sfFlights = !isAirIqOnlyMode() ? await SeriesFare.find({
       origin: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
       destination: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
       status: { $regex: new RegExp('^Active$', 'i') },
       travelDate: { $gte: today, $lte: endDate },
       availableSeats: { $gt: 0 },
       isTestFlight: { $ne: true }
-    }).lean();
+    }).lean() : [];
 
     // 2. Fetch from standard DB Flights
-    const dbFlights = await Flight.find({
+    const dbFlights = !isAirIqOnlyMode() ? await Flight.find({
       departureAirportCode: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
       arrivalAirportCode: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
       departureTime: { $gte: today, $lte: endDate }
-    }).lean();
+    }).lean() : [];
 
     console.log(`Calendar Prices API: origin=${origin} (${originIata}), dest=${destination} (${destinationIata})`);
     console.log(`Calendar Prices API: Found ${dbFlights.length} standard flights and ${sfFlights.length} series fares`);
@@ -1320,28 +1469,33 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
     });
 
     // 3. Fetch from NexusDMC (only dates available)
-    try {
-      const nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' }).lean();
-      const { getAvailableDates } = require('../flights/nexusdmc.service');
-      const nexusDatesResult = await getAvailableDates(originIata, destinationIata);
-      
-      console.log('Nexus Dates Result:', JSON.stringify(nexusDatesResult, null, 2));
+    if (!isAirIqOnlyMode()) {
+      try {
+        const nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' }).lean();
+        const { getAvailableDates } = require('../flights/nexusdmc.service');
+        const nexusDatesResult = await getAvailableDates(originIata, destinationIata);
+        
+        console.log('Nexus Dates Result:', JSON.stringify(nexusDatesResult, null, 2));
 
-      if (nexusDatesResult && nexusDatesResult.success && nexusDatesResult._data && nexusDatesResult._data.sector) {
-        const dateList = nexusDatesResult._data.sector.date || [];
-        dateList.forEach((dateStr: string) => {
-          // dateStr from Nexus is usually YYYY-MM-DD
-          if (!isDateAllowedByCUG(nexusSupplier, dateStr)) {
-            return; // Skip this date
-          }
-          if (!pricesMap[dateStr]) {
-            pricesMap[dateStr] = -1; // -1 indicates available but price unknown
-          }
-        });
+        if (nexusDatesResult && nexusDatesResult.success && nexusDatesResult._data && nexusDatesResult._data.sector) {
+          const dateList = nexusDatesResult._data.sector.date || [];
+          dateList.forEach((dateStr: string) => {
+            // dateStr from Nexus is usually YYYY-MM-DD
+            if (!isDateAllowedByCUG(nexusSupplier, dateStr)) {
+              return; // Skip this date
+            }
+            if (!pricesMap[dateStr]) {
+              pricesMap[dateStr] = -1; // -1 indicates available but price unknown
+            }
+          });
+        }
+      } catch (nexusErr) {
+        console.error("Error fetching nexus dates for calendar:", nexusErr);
       }
-    } catch (nexusErr) {
-      console.error("Error fetching nexus dates for calendar:", nexusErr);
     }
+
+    // 4. AirIQ dates: Do not mark dates as '-1' (Available) without prices to prevent confusing users
+    // Dates will cleanly display real prices when searched, or '--' otherwise.
 
     res.json(pricesMap);
   } catch (error: any) {
@@ -1458,6 +1612,21 @@ export const getFlightCities = async (req: Request, res: Response) => {
     // Step 1: Collect ONLY codes that actually have flights (from DB + API)
     const availableCodes = new Set<string>();
 
+    if (isAirIqOnlyMode()) {
+      // In AirIQ-only mode, prioritize AirIQ operational sectors so user can pick valid AirIQ routes
+      try {
+        const airIqSectors = await getAvailableSectorsAirIq();
+        if (Array.isArray(airIqSectors)) {
+          for (const s of airIqSectors) {
+            if (s.Origin) availableCodes.add(s.Origin.toUpperCase());
+            if (s.Destination) availableCodes.add(s.Destination.toUpperCase());
+          }
+        }
+      } catch (airIqErr) {}
+      if (availableCodes.size === 0) {
+        ['DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'GOI', 'IXG', 'ATQ', 'SXR', 'IXB'].forEach(c => availableCodes.add(c));
+      }
+    } else {
     // From Flights DB collection
     const flightDep = await Flight.distinct('departureAirportCode');
     const flightArr = await Flight.distinct('arrivalAirportCode');
@@ -1494,6 +1663,7 @@ export const getFlightCities = async (req: Request, res: Response) => {
         }
       }
     } catch (airIqErr) {}
+    }
 
     // Step 2: Build the final list using ONLY available codes, resolving names from lookup
     const cities = Array.from(availableCodes).map(code => {

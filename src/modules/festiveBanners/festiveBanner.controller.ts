@@ -157,3 +157,4 @@ export const toggleBannerStatus = async (req: Request, res: Response) => {
     res.status(500).json({ message: error.message || 'Failed to toggle festive banner status' });
   }
 };
+

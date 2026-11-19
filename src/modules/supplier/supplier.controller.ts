@@ -99,24 +99,50 @@ export const syncBalance = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Can only sync balance for API suppliers' });
     }
 
-    if (!supplier.apiConfig || !supplier.apiConfig.endpoint || !supplier.apiConfig.apiKey) {
-      return res.status(400).json({ message: 'API configuration missing for this supplier' });
-    }
+    let liveBalance = 0;
+    const isAirIq = ['air iq', 'airiq'].includes((supplier.name || '').toLowerCase());
 
-    // Fetch live balance from supplier's API (Nexus DMC)
-    const response = await axios.get(`${supplier.apiConfig.endpoint}/api/v1/accounts/balance`, {
-      headers: {
-        'Authorization': `Bearer ${supplier.apiConfig.apiKey}`, // Assuming API key is passed in Authorization header or adjust as needed
-        'Content-Type': 'application/json'
+    if (isAirIq) {
+      const airIqBaseUrl = process.env.AIRIQ_BASE_URL || 'https://omairiq.azurewebsites.net';
+      const airIqApiKey = process.env.AIRIQ_API_KEY || '';
+      const airIqUsername = process.env.AIRIQ_USERNAME || '';
+      const airIqPassword = process.env.AIRIQ_PASSWORD || '';
+
+      const airIqRes = await axios.post(`${airIqBaseUrl}/login`, {
+        Username: airIqUsername,
+        Password: airIqPassword
+      }, {
+        headers: {
+          'api-key': airIqApiKey,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      if (airIqRes.data && airIqRes.data.user) {
+        liveBalance = Number(airIqRes.data.user.balance || 0);
+      } else {
+        return res.status(500).json({ message: 'Failed to fetch balance from AirIQ API' });
       }
-    });
+    } else {
+      if (!supplier.apiConfig || !supplier.apiConfig.endpoint || !supplier.apiConfig.apiKey) {
+        return res.status(400).json({ message: 'API configuration missing for this supplier' });
+      }
 
-    if (!response.data || !response.data.success || !response.data._data || !response.data._data.wallets) {
-      return res.status(500).json({ message: 'Failed to fetch balance from Nexus API', details: response.data });
+      // Fetch live balance from supplier's API (Nexus DMC)
+      const response = await axios.get(`${supplier.apiConfig.endpoint}/api/v1/accounts/balance`, {
+        headers: {
+          'Authorization': `Bearer ${supplier.apiConfig.apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.data || !response.data.success || !response.data._data || !response.data._data.wallets) {
+        return res.status(500).json({ message: 'Failed to fetch balance from Nexus API', details: response.data });
+      }
+
+      liveBalance = response.data._data.wallets[0].balance;
     }
-
-    // Assuming we want the balance from the first wallet in the array
-    const liveBalance = response.data._data.wallets[0].balance;
 
     const difference = liveBalance - supplier.balance;
 

@@ -69,6 +69,7 @@ transactionSchema.index({ referenceNo: 1 });
 transactionSchema.index({ type: 1 });
 transactionSchema.index({ pnr: 1 });
 transactionSchema.index({ date: -1 });
+transactionSchema.index({ razorpayPaymentId: 1 }, { unique: true, sparse: true });
 
 const Transaction = mongoose.model<ITransaction>('Transaction', transactionSchema);
 export default Transaction;

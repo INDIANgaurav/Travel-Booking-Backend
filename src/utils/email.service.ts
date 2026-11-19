@@ -485,15 +485,25 @@ export const sendBookingConfirmationEmail = async (to: string, name: string, boo
 };
 
 export const sendCancellationEmail = async (to: string, name: string, pnr: string, refundAmount: number) => {
+  const isRefundApplicable = refundAmount > 0;
   const body = `
-    <p style="color: #334155; font-size: 16px; margin: 0 0 10px 0; font-weight: 500;">Dear ${name},</p>
-    <p style="color: #64748b; font-size: 15px; margin: 0 0 20px 0; line-height: 1.5;">Your cancellation request has been processed successfully.</p>
+    <p style="color: #334155; font-size: 16px; margin: 0 0 10px 0; font-weight: 500;">Dear ${name || 'Valued Customer'},</p>
+    <p style="color: #64748b; font-size: 15px; margin: 0 0 20px 0; line-height: 1.5;">Your flight cancellation has been processed successfully.</p>
     <div style="background-color: #fef2f2; padding: 20px; border-radius: 12px; border: 1px solid #fecaca; margin-bottom: 25px;">
       <p style="margin: 0 0 10px 0; font-size: 14px; color: #475569;"><strong>Airline PNR:</strong> ${pnr}</p>
-      <p style="margin: 0 0 10px 0; font-size: 14px; color: #475569;"><strong>Status:</strong> Cancelled</p>
+      <p style="margin: 0 0 10px 0; font-size: 14px; color: #475569;"><strong>Booking Status:</strong> <span style="color: #dc2626; font-weight: bold;">Cancelled</span></p>
+      ${isRefundApplicable ? `
       <p style="margin: 0; font-size: 14px; color: #475569;"><strong>Refund Amount:</strong> <span style="color: #059669; font-weight: bold;">₹${refundAmount.toLocaleString('en-IN')}</span> (Credited to Wallet)</p>
+      ` : `
+      <p style="margin: 0 0 10px 0; font-size: 14px; color: #475569;"><strong>Fare Category:</strong> Non-Refundable / Series Fare</p>
+      <p style="margin: 0; font-size: 13px; color: #991b1b; line-height: 1.4;"><strong>Refund Status:</strong> No refund applicable as per airline fixed-departure contract rules.</p>
+      `}
     </div>
-    <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">The refund amount has been added to your TrippeChalo India B2B wallet.</p>
+    ${isRefundApplicable ? `
+    <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">The approved refund amount has been credited to your TrippeChalo wallet.</p>
+    ` : `
+    <p style="color: #64748b; font-size: 14px; margin: 0; line-height: 1.5;">If you have any questions regarding this cancellation, feel free to reach out to TrippeChalo Support.</p>
+    `}
   `;
   await sendEmail(to, `Booking Cancelled - PNR: ${pnr}`, getBaseTemplate('TrippeChalo India', 'Booking Cancellation', body), "TrippeChalo India Support");
 };

@@ -117,8 +117,28 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
 
 export const getSeriesFares = async (req: AuthRequest, res: Response) => {
   try {
-    const { origin, destination, date, airline, status, isTestFlight, page, limit, search, supplierName, bookingType } = req.query;
+    const { 
+      origin, 
+      destination, 
+      date, 
+      startDate, 
+      fromDate, 
+      endDate, 
+      toDate, 
+      airline, 
+      status, 
+      isTestFlight, 
+      isExpired,
+      page, 
+      limit, 
+      search, 
+      supplierName, 
+      bookingType 
+    } = req.query;
     const filter: any = { isArchived: { $ne: true } };
+    const andConditions: any[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     // Strict Data Isolation: ID-based linking
     if (req.user?.roles?.includes('SUPPLIER_AGENT') || req.user?.roles?.includes('SUPPLIER_STAFF')) {
@@ -128,33 +148,80 @@ export const getSeriesFares = async (req: AuthRequest, res: Response) => {
     if (origin) filter.origin = (origin as string).toUpperCase();
     if (destination) filter.destination = (destination as string).toUpperCase();
     if (airline) filter.airline = new RegExp(airline as string, 'i');
-    if (status && status !== 'All') filter.status = new RegExp(`^${status}$`, 'i');
     if (supplierName && supplierName !== 'All') filter.supplierName = new RegExp(supplierName as string, 'i');
     if (bookingType && bookingType !== 'All') filter.bookingType = bookingType;
+
+    // Date Range Support (startDate / fromDate to endDate / toDate) or Single Date
+    const rangeStart = (startDate || fromDate) as string;
+    const rangeEnd = (endDate || toDate) as string;
+
+    if (rangeStart || rangeEnd) {
+      filter.travelDate = filter.travelDate || {};
+      if (rangeStart) {
+        const s = new Date(rangeStart);
+        s.setHours(0, 0, 0, 0);
+        filter.travelDate.$gte = s;
+      }
+      if (rangeEnd) {
+        const e = new Date(rangeEnd);
+        e.setHours(23, 59, 59, 999);
+        filter.travelDate.$lte = e;
+      }
+    } else if (date) {
+      const searchDate = new Date(date as string);
+      const startOfDay = new Date(new Date(searchDate).setHours(0, 0, 0, 0));
+      const endOfDay = new Date(new Date(searchDate).setHours(23, 59, 59, 999));
+      filter.travelDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    // Status & Expiry Handling
+    const isExpiredRequested = isExpired === 'true' || isTestFlight === 'EXPIRED' || (typeof status === 'string' && status.toLowerCase() === 'expired');
+
+    if (isExpiredRequested) {
+      andConditions.push({
+        $or: [
+          { status: new RegExp('^Expired$', 'i') },
+          { travelDate: { $lt: today } }
+        ]
+      });
+    } else if (status && status !== 'All') {
+      const st = (status as string).toLowerCase();
+      if (st === 'active') {
+        filter.status = new RegExp('^Active$', 'i');
+        // Exclude past expired inventory from Active when no past range is queried
+        if (!filter.travelDate?.$lte && !filter.travelDate?.$gte) {
+          filter.travelDate = { $gte: today };
+        }
+      } else {
+        filter.status = new RegExp(`^${status}$`, 'i');
+      }
+    }
+
+    // Mode / Environment (Live vs Test)
     if (isTestFlight !== undefined && isTestFlight !== '' && isTestFlight !== 'All') {
       if (isTestFlight === 'true') {
         filter.isTestFlight = true;
-      } else {
+      } else if (isTestFlight === 'false') {
         filter.isTestFlight = { $ne: true };
       }
     }
 
+    // Search query
     if (search) {
       const searchRegex = new RegExp(search as string, 'i');
-      filter.$or = [
-        { sfId: searchRegex },
-        { airlinePnr: searchRegex },
-        { flightNo: searchRegex },
-        { origin: searchRegex },
-        { destination: searchRegex }
-      ];
+      andConditions.push({
+        $or: [
+          { sfId: searchRegex },
+          { airlinePnr: searchRegex },
+          { flightNo: searchRegex },
+          { origin: searchRegex },
+          { destination: searchRegex }
+        ]
+      });
     }
 
-    if (date) {
-      const searchDate = new Date(date as string);
-      const startOfDay = new Date(searchDate.setHours(0, 0, 0, 0));
-      const endOfDay = new Date(searchDate.setHours(23, 59, 59, 999));
-      filter.travelDate = { $gte: startOfDay, $lte: endOfDay };
+    if (andConditions.length > 0) {
+      filter.$and = andConditions;
     }
 
     if (page && limit) {

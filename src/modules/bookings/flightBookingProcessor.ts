@@ -5,6 +5,13 @@ import SeriesFare from '../seriesFare/seriesFare.model';
 import mongoose from 'mongoose';
 import { clearFlightSearchCache } from '../searches/search.controller';
 
+export interface IFlightBookingResult {
+  apiBookingFailed: boolean;
+  isUncertainTimeout?: boolean;
+  details: any;
+  status: 'TICKETING_IN_PROGRESS' | 'CONFIRMED' | 'FAILED';
+}
+
 /**
  * Unified Flight Booking Processor
  * Evaluates the details payload and executes the correct supplier API.
@@ -14,11 +21,12 @@ export const executeFlightSupplierBooking = async (
   bookingId: string, 
   details: any, 
   userId: any
-): Promise<{ apiBookingFailed: boolean; details: any; status: 'TICKETING_IN_PROGRESS' | 'CONFIRMED' }> => {
+): Promise<IFlightBookingResult> => {
   let apiBookingFailed = false;
-  let newStatus: 'TICKETING_IN_PROGRESS' | 'CONFIRMED' = 'TICKETING_IN_PROGRESS';
+  let isUncertainTimeout = false;
+  let newStatus: 'TICKETING_IN_PROGRESS' | 'CONFIRMED' | 'FAILED' = 'TICKETING_IN_PROGRESS';
 
-  if (!details) return { apiBookingFailed, details, status: newStatus };
+  if (!details) return { apiBookingFailed, isUncertainTimeout, details, status: newStatus };
 
   let supplierCode = 'NEXUS';
   if (details.isAirIqFare || (details.flight_keys && details.flight_keys[0]?.startsWith('AIRIQ_')) || details.airIq_ticket_id) {
@@ -230,16 +238,26 @@ export const executeFlightSupplierBooking = async (
         const passportNumber = p.passportNum || p.passportNumber || `IN${Math.floor(1000000 + Math.random() * 9000000)}`;
         const nationality = p.nationality || 'IN';
 
-        const paxItem = {
+        const paxItem: any = {
           title,
           first_name: firstName,
-          last_name: lastName,
-          dob,
-          passport_number: passportNumber,
-          passport_expirydate: passportExpiry,
-          passport_issuing_country_code: nationality,
-          nationality: nationality
+          last_name: lastName
         };
+
+        if (type === 'INFANT') {
+          paxItem.dob = dob;
+          paxItem.travel_with = '1';
+        } else if (type === 'CHILD') {
+          paxItem.dob = dob;
+        }
+
+        // Add passport info if international or provided
+        if (p.passportNum || p.passportNumber) {
+          paxItem.passport_number = passportNumber;
+          paxItem.passport_expirydate = passportExpiry;
+          paxItem.passport_issuing_country_code = nationality;
+          paxItem.nationality = nationality;
+        }
 
         if (type === 'CHILD') children.push(paxItem);
         else if (type === 'INFANT') infants.push(paxItem);
@@ -247,11 +265,11 @@ export const executeFlightSupplierBooking = async (
       });
 
       const bookPayload = {
-        ticket_id: ticketId,
-        total_pax: adults.length + children.length + infants.length,
-        adult: adults.length,
-        child: children.length,
-        infant: infants.length,
+        ticket_id: String(ticketId),
+        total_pax: String(adults.length + children.length + infants.length),
+        adult: String(adults.length),
+        child: String(children.length),
+        infant: String(infants.length),
         adult_info: adults,
         child_info: children,
         infant_info: infants
@@ -286,10 +304,29 @@ export const executeFlightSupplierBooking = async (
       }
     }
   } catch (error: any) {
-    console.error(`[Supplier: ${supplierCode}] Booking failed:`, error);
-    apiBookingFailed = true;
-    details.api_error = error.message || `Exception during ${supplierCode} booking`;
+    console.error(`[Supplier: ${supplierCode}] Booking call exception:`, error);
+    const isTimeout = 
+      error.code === 'ECONNABORTED' ||
+      error.code === 'ETIMEDOUT' ||
+      error.message?.toLowerCase().includes('timeout') ||
+      error.message?.toLowerCase().includes('network error') ||
+      (error.response && [502, 503, 504].includes(error.response.status));
+
+    if (isTimeout) {
+      // UNCERTAIN OUTCOME: A timeout does not mean the supplier didn't issue the ticket!
+      isUncertainTimeout = true;
+      apiBookingFailed = false;
+      newStatus = 'TICKETING_IN_PROGRESS';
+      details.supplierStatus = 'TIMEOUT_PENDING_RECONCILIATION';
+      details.lastError = error.message;
+      details.timeoutAt = new Date();
+    } else {
+      apiBookingFailed = true;
+      newStatus = 'FAILED';
+      details.api_error = error.message || `Exception during ${supplierCode} booking`;
+      details.supplierStatus = 'FAILED';
+    }
   }
 
-  return { apiBookingFailed, details, status: newStatus };
+  return { apiBookingFailed, isUncertainTimeout, details, status: newStatus };
 };

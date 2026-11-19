@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import User from '../users/user.model';
 import Transaction from './wallet.model';
+import TopUpOrder from './topUpOrder.model';
 import { OfflineTopUpRequest } from './offlineTopUp.model';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
@@ -29,39 +30,14 @@ export const getWallet = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// @desc    Add money to wallet
+// @desc    Add money to wallet (DEPRECATED & SECURED)
 // @route   POST /api/wallet/add
-// @access  Private
+// @access  Private (Blocked for security)
 export const addMoney = async (req: AuthRequest, res: Response) => {
-  try {
-    const { amount, paymentMethod } = req.body;
-    
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ message: 'Invalid amount' });
-    }
-
-    const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    user.walletBalance += amount;
-    await user.save();
-
-    const transaction = await Transaction.create({
-      user: user._id,
-      type: 'CREDIT',
-      amount,
-      description: `Added via ${paymentMethod || 'UPI'}`,
-      paymentMethod: paymentMethod || 'UPI',
-    });
-
-    res.json({
-      balance: user.walletBalance,
-      currency: 'INR',
-      transaction
-    });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  }
+  console.warn(`[SECURITY ALERT] Unauthorized attempt to invoke /api/wallet/add by user: ${req.user?._id}`);
+  return res.status(403).json({ 
+    message: 'Direct balance addition is forbidden. Use official online top-up or admin recharge channels.' 
+  });
 };
 
 // @desc    Create Razorpay Order for Wallet Top-up
@@ -89,17 +65,35 @@ export const createTopUpOrder = async (req: AuthRequest, res: Response) => {
     const options = {
       amount: totalPayable * 100, // in paise
       currency: 'INR',
-      receipt: `w_${req.user._id.toString().slice(-6)}_${Date.now()}`
+      receipt: `w_${req.user._id.toString().slice(-6)}_${Date.now()}`,
+      notes: {
+        userId: req.user._id.toString(),
+        baseAmount: String(amount),
+        surcharge: String(surcharge),
+        purpose: 'WALLET_TOPUP'
+      }
     };
 
     const order = await razorpay.orders.create(options);
     
+    // Persist TopUpOrder record server-side to prevent reliance on client payload or gateway notes
+    await TopUpOrder.create({
+      orderId: order.id,
+      user: req.user._id,
+      baseAmount: amount,
+      surcharge,
+      totalPayable,
+      currency: order.currency,
+      status: 'CREATED'
+    });
+
     res.json({
       orderId: order.id,
       amount: totalPayable,
       baseAmount: amount,
       surcharge: surcharge,
-      currency: order.currency
+      currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID
     });
   } catch (error: any) {
     console.error('Razorpay Error:', error);
@@ -107,7 +101,7 @@ export const createTopUpOrder = async (req: AuthRequest, res: Response) => {
   }
 };
 
-// @desc    Verify Wallet Top-up Payment
+// @desc    Verify Wallet Top-up Payment (HARDENED & IDEMPOTENT)
 // @route   POST /api/wallet/verify-payment
 // @access  Private
 export const verifyTopUpPayment = async (req: AuthRequest, res: Response) => {
@@ -116,48 +110,146 @@ export const verifyTopUpPayment = async (req: AuthRequest, res: Response) => {
       razorpay_order_id, 
       razorpay_payment_id, 
       razorpay_signature,
-      baseAmount,
-      surcharge,
       paymentMethod
     } = req.body;
 
-    const secret = process.env.RAZORPAY_KEY_SECRET || '';
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ message: 'Missing payment verification credentials' });
+    }
 
+    // 1. Idempotency Check: Prevent duplicate crediting of the same payment ID
+    const existingTx = await Transaction.findOne({ razorpayPaymentId: razorpay_payment_id });
+    if (existingTx) {
+      const existingUser = await User.findById(req.user._id);
+      return res.status(200).json({
+        message: 'Payment was already processed and credited',
+        balance: existingUser?.walletBalance,
+        transaction: existingTx,
+        alreadyProcessed: true
+      });
+    }
+
+    // 2. Cryptographic signature check with Timing-Safe comparison
+    const secret = process.env.RAZORPAY_KEY_SECRET || '';
     const hmac = crypto.createHmac('sha256', secret);
-    hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
+    hmac.update(`${razorpay_order_id}|${razorpay_payment_id}`);
     const generated_signature = hmac.digest('hex');
 
-    if (generated_signature !== razorpay_signature) {
+    const isSigValid = 
+      generated_signature.length === razorpay_signature.length &&
+      crypto.timingSafeEqual(Buffer.from(generated_signature), Buffer.from(razorpay_signature));
+
+    if (!isSigValid) {
       return res.status(400).json({ message: 'Invalid payment signature' });
     }
 
-    // Find User
-    const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    // 3. Atomic Database-Level Order Lock (prevents race condition between client and webhook)
+    const topUpOrder = await TopUpOrder.findOneAndUpdate(
+      { orderId: razorpay_order_id, user: req.user._id, status: 'CREATED' },
+      { $set: { status: 'CREDITED', paymentId: razorpay_payment_id } },
+      { new: true }
+    );
 
-    // Update wallet balance with the BASE amount only
-    user.walletBalance += Number(baseAmount);
-    await user.save();
+    if (!topUpOrder) {
+      const alreadyCredited = await TopUpOrder.findOne({ orderId: razorpay_order_id, status: 'CREDITED' });
+      if (alreadyCredited) {
+        const user = await User.findById(req.user._id);
+        const tx = await Transaction.findOne({ razorpayOrderId: razorpay_order_id });
+        return res.status(200).json({
+          message: 'Payment was already processed and credited',
+          balance: user?.walletBalance,
+          transaction: tx,
+          alreadyProcessed: true
+        });
+      }
+      return res.status(404).json({ message: 'Valid uncredited top-up order not found for this user' });
+    }
 
-    // Log the transaction
-    const transaction = await Transaction.create({
-      user: user._id,
-      type: 'CREDIT',
-      amount: Number(baseAmount),
-      description: `Wallet Top-up via ${paymentMethod || 'Razorpay'}`,
-      paymentMethod: paymentMethod || 'RAZORPAY',
-      razorpayOrderId: razorpay_order_id,
-      razorpayPaymentId: razorpay_payment_id,
-      razorpaySignature: razorpay_signature,
-      surcharge: Number(surcharge)
+    // 4. Server-side Verification with Razorpay Gateway
+    const razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID || '',
+      key_secret: process.env.RAZORPAY_KEY_SECRET || ''
     });
 
-    res.json({
-      message: 'Payment verified and wallet credited successfully',
-      balance: user.walletBalance,
-      transaction
-    });
+    let order: any;
+    let payment: any;
+    try {
+      order = await razorpay.orders.fetch(razorpay_order_id);
+      payment = await razorpay.payments.fetch(razorpay_payment_id);
+    } catch (fetchErr: any) {
+      console.error('Failed to fetch order/payment from Razorpay:', fetchErr);
+      // Revert status to CREATED so user/webhook can retry
+      await TopUpOrder.updateOne({ _id: topUpOrder._id }, { $set: { status: 'CREATED' } });
+      return res.status(502).json({ message: 'Unable to verify order with payment gateway' });
+    }
+
+    if (!order || !payment) {
+      await TopUpOrder.updateOne({ _id: topUpOrder._id }, { $set: { status: 'CREATED' } });
+      return res.status(404).json({ message: 'Payment record not found at gateway' });
+    }
+
+    if (payment.order_id !== razorpay_order_id) {
+      await TopUpOrder.updateOne({ _id: topUpOrder._id }, { $set: { status: 'FAILED' } });
+      return res.status(400).json({ message: 'Payment ID does not match specified Order ID' });
+    }
+
+    if (payment.status !== 'captured' && payment.status !== 'authorized') {
+      await TopUpOrder.updateOne({ _id: topUpOrder._id }, { $set: { status: 'CREATED' } });
+      return res.status(400).json({ message: `Payment is not in an authorized state: ${payment.status}` });
+    }
+
+    // 5. Amount derived from server-side persisted TopUpOrder
+    const verifiedBaseAmount = topUpOrder.baseAmount;
+    const verifiedSurcharge = topUpOrder.surcharge;
+
+    // 5. Atomic Mongoose Session Transaction
+    const mongoose = require('mongoose');
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const user = await User.findByIdAndUpdate(
+        req.user._id,
+        { $inc: { walletBalance: verifiedBaseAmount } },
+        { session, new: true }
+      );
+
+      if (!user) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      const transaction = await Transaction.create([{
+        user: user._id,
+        type: 'CREDIT',
+        amount: verifiedBaseAmount,
+        description: `Wallet Top-up via ${paymentMethod || payment.method?.toUpperCase() || 'Razorpay'}`,
+        paymentMethod: paymentMethod || payment.method?.toUpperCase() || 'RAZORPAY',
+        razorpayOrderId: razorpay_order_id,
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        surcharge: verifiedSurcharge
+      }], { session });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      res.json({
+        message: 'Payment verified and wallet credited successfully',
+        balance: user.walletBalance,
+        transaction: transaction[0]
+      });
+    } catch (txErr: any) {
+      await session.abortTransaction();
+      session.endSession();
+      if (txErr.code === 11000) {
+        return res.status(200).json({ message: 'Payment already credited concurrently' });
+      }
+      throw txErr;
+    }
   } catch (error: any) {
+    console.error('Wallet verify payment error:', error);
     res.status(500).json({ message: error.message || 'Verification failed' });
   }
 };

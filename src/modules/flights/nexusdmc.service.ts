@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const NEXUSDMC_API_DOMAIN = process.env.NEXUSDMC_API_DOMAIN || 'https://krn.nexusdmc.com';
-const NEXUSDMC_API_KEY = process.env.NEXUSDMC_API_KEY || 'test_f7777e456d5fa518add3772036c4afa357db9cb6fe96a80d';
+const NEXUSDMC_API_KEY = process.env.NEXUSDMC_API_KEY || '';
 
 const nexusApi = axios.create({
   baseURL: NEXUSDMC_API_DOMAIN,
@@ -9,6 +9,7 @@ const nexusApi = axios.create({
     'Content-Type': 'application/json',
     'api-key': NEXUSDMC_API_KEY,
   },
+  timeout: 25000, // 25s timeout to prevent hanging connections
 });
 
 export const getAvailableSectors = async (operatingDays: boolean = false) => {

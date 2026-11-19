@@ -182,7 +182,7 @@ const userSchema = new Schema<IUser>(
   }
 );
 
-userSchema.index({ role: 1 });
+userSchema.index({ roles: 1 });
 userSchema.index({ agentStatus: 1 });
 userSchema.index({ isActive: 1 });
 userSchema.index({ supplierOwnerId: 1 });

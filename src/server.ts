@@ -7,6 +7,8 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import mongoose from 'mongoose';
+import crypto from 'crypto';
 import connectDB from './config/db';
 import './config/firebase-admin';
 import { mongoSanitize } from './middleware/sanitize.middleware';
@@ -47,7 +49,35 @@ import notificationRoutes from './modules/notifications/notification.routes';
 import b2bApiRoutes from './modules/b2bApi/b2bApi.routes';
 import b2bAdminRoutes from './modules/b2bApi/b2bAdmin.routes';
 import festiveBannerRoutes from './modules/festiveBanners/festiveBanner.routes';
+import webhookRoutes from './modules/payments/webhook.routes';
 import { seedSuppliers } from './modules/supplier/supplier.service';
+
+// Centralized Security & Environment Validator
+const validateSecurityEnvironment = () => {
+  const critical = [
+    { name: 'JWT_SECRET', minLen: 8 },
+    { name: 'MONGO_URI', minLen: 5 }
+  ];
+
+  for (const item of critical) {
+    const val = process.env[item.name];
+    if (!val || val.trim().length < item.minLen) {
+      console.error(`FATAL CONFIGURATION ERROR: [${item.name}] environment variable is missing or insecure!`);
+      process.exit(1);
+    }
+  }
+
+  // Payment gateway health check
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.warn('⚠️ [PAYMENT GATEWAY CONFIG WARNING] RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET is not set in environment.');
+  }
+
+  // AirIQ health check
+  if (!process.env.AIRIQ_API_KEY || !process.env.AIRIQ_USERNAME || !process.env.AIRIQ_PASSWORD) {
+    console.warn('⚠️ [SUPPLIER CONFIG WARNING] AirIQ API credentials (AIRIQ_API_KEY, AIRIQ_USERNAME, AIRIQ_PASSWORD) missing in environment.');
+  }
+};
+validateSecurityEnvironment();
 
 connectDB().then(() => {
   seedSuppliers();
@@ -55,12 +85,26 @@ connectDB().then(() => {
 });
 
 const app = express();
+app.set('trust proxy', 1); // Resolve real client IP behind Render/Nginx reverse proxies
 const server = http.createServer(app);
 initSocket(server);
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ 
+  limit: '10mb',
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
+
+// Request Correlation ID Middleware for distributed tracing & log auditing
+app.use((req, res, next) => {
+  const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  (req as any).id = requestId;
+  res.setHeader('x-request-id', requestId);
+  next();
+});
 
 // Security Middlewares
 app.use(helmet({ crossOriginResourcePolicy: false }));
@@ -75,13 +119,65 @@ app.get('/', (req, res) => {
   res.send('Travel Booking App API is running (TypeScript)... ');
 });
 
+// Production Health & Readiness Endpoints
+app.get('/api/health', (_req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = dbState === 1 ? 'CONNECTED' : dbState === 2 ? 'CONNECTING' : 'DISCONNECTED';
+  const memory = process.memoryUsage();
+
+  const healthData = {
+    status: dbState === 1 ? 'UP' : 'DEGRADED',
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    database: {
+      status: dbStatus,
+      host: mongoose.connection.host || 'unknown',
+    },
+    system: {
+      heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
+      heapTotalMB: Math.round(memory.heapTotal / 1024 / 1024),
+      rssMB: Math.round(memory.rss / 1024 / 1024),
+    }
+  };
+
+  const statusCode = dbState === 1 ? 200 : 503;
+  res.status(statusCode).json(healthData);
+});
+
+app.get('/api/health/ready', (_req, res) => {
+  if (mongoose.connection.readyState === 1) {
+    res.status(200).send('READY');
+  } else {
+    res.status(503).send('NOT_READY');
+  }
+});
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
   message: 'Too many requests from this IP, please try again after 15 minutes',
-  skip: (req) => req.originalUrl.startsWith('/api/v1/b2b')
+  skip: (req) => req.originalUrl.startsWith('/api/v1/b2b') || req.originalUrl.startsWith('/api/webhooks') || req.originalUrl.startsWith('/api/health')
 });
 app.use('/api/', apiLimiter);
+
+// Pre-DB Auth DDoS Shield (high IP ceiling avoids shared-Wi-Fi false positives; per-user locks live in auth.routes.ts)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many authentication attempts from this network. Please try again after 15 minutes.' }
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/register-agent', authLimiter);
+app.use('/api/auth/verify-registration', authLimiter);
+app.use('/api/auth/google', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
+
+// Webhook endpoints (raw-verified, idempotently handled)
+app.use('/api/webhooks', webhookRoutes);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin/notifications', notificationRoutes);
@@ -128,6 +224,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 const PORT = process.env.PORT || 5000;
 
+// Multi-supplier search mode: All suppliers & manual FD unlocked
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

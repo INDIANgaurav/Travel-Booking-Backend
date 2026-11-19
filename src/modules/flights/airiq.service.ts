@@ -1,9 +1,18 @@
 import axios from 'axios';
 
 const AIRIQ_BASE_URL = process.env.AIRIQ_BASE_URL || 'https://omairiq.azurewebsites.net';
-const AIRIQ_API_KEY = process.env.AIRIQ_API_KEY || 'NTMzNDUwMDpBSVJJUSBURVNUIEFQSToxODkxOTMwMDM1OTk2OlBvTjE2NGNkLy9heE53WC9hM00rS1ZrcnJSa2Q0S05adHl3Q0NHZmU4Uzg9';
-const AIRIQ_USERNAME = process.env.AIRIQ_USERNAME || '9555202202';
-const AIRIQ_PASSWORD = process.env.AIRIQ_PASSWORD || '112233344';
+const AIRIQ_API_KEY = process.env.AIRIQ_API_KEY || '';
+
+const getAirIqCredentials = () => {
+  const apiKey = process.env.AIRIQ_API_KEY || '';
+  const username = process.env.AIRIQ_USERNAME || '';
+  const password = process.env.AIRIQ_PASSWORD || '';
+
+  if (!apiKey || !username || !password) {
+    throw new Error('AirIQ configuration missing: Please configure AIRIQ_API_KEY, AIRIQ_USERNAME, and AIRIQ_PASSWORD in server environment variables.');
+  }
+  return { apiKey, username, password };
+};
 
 // Store token in memory
 let cachedToken: string = '';
@@ -18,16 +27,18 @@ export const authenticateAirIq = async (): Promise<string> => {
     return cachedToken;
   }
 
+  const { apiKey, username, password } = getAirIqCredentials();
+
   try {
     const response = await axios.post(
       `${AIRIQ_BASE_URL}/login`,
       {
-        Username: AIRIQ_USERNAME,
-        Password: AIRIQ_PASSWORD
+        Username: username,
+        Password: password
       },
       {
         headers: {
-          'api-key': AIRIQ_API_KEY,
+          'api-key': apiKey,
           'Content-Type': 'application/json'
         },
         timeout: 10000
@@ -73,6 +84,35 @@ export const getAvailableSectorsAirIq = async (): Promise<any[]> => {
   }
 };
 
+/**
+ * Fetches available departure dates for a given route from AirIQ
+ */
+export const getAvailableDatesAirIq = async (origin: string, destination: string): Promise<string[]> => {
+  try {
+    const token = await authenticateAirIq();
+    const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+    const headers = {
+      'api-key': AIRIQ_API_KEY,
+      'Authorization': authHeader,
+      'Content-Type': 'application/json'
+    };
+
+    const response = await axios.post(
+      `${AIRIQ_BASE_URL}/availability`,
+      { origin, destination },
+      { headers, timeout: 10000 }
+    );
+
+    if (response.data && response.data.status === 'success' && Array.isArray(response.data.data)) {
+      return response.data.data;
+    }
+    return [];
+  } catch (error: any) {
+    console.warn('AirIQ /availability warning:', error.response?.data?.message || error.message);
+    return [];
+  }
+};
+
 export interface AirIqSearchPayload {
   origin: string;
   destination: string;
@@ -80,6 +120,7 @@ export interface AirIqSearchPayload {
   adult: number;
   child?: number;
   infant?: number;
+  airline_code?: string;
 }
 
 export interface AirIqFlightItem {
@@ -97,17 +138,18 @@ export interface AirIqFlightItem {
   price: number;
   infant_price: number;
   inventory_type: string | null;
-  cabin_baggage: string;
-  hand_luggage: string;
-  isinternational: boolean;
+  cabin_baggage?: string;
+  hand_luggage?: string;
+  isinternational?: boolean;
 }
 
 /**
  * Searches flights on AirIQ with automatic endpoint fallback
+ * Follows AirIQ Supplier Search API spec (/suppliersearch)
  */
 export const searchFlightsAirIq = async (payload: AirIqSearchPayload): Promise<any> => {
   const token = await authenticateAirIq();
-  const searchBody = {
+  const searchBody: Record<string, any> = {
     origin: payload.origin,
     destination: payload.destination,
     departure_date: payload.departure_date,
@@ -116,14 +158,19 @@ export const searchFlightsAirIq = async (payload: AirIqSearchPayload): Promise<a
     infant: payload.infant || 0
   };
 
+  if (payload.airline_code) {
+    searchBody.airline_code = payload.airline_code;
+  }
+
+  const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
   const headers = {
     'api-key': AIRIQ_API_KEY,
-    'Authorization': token,
+    'Authorization': authHeader,
     'Content-Type': 'application/json'
   };
 
   try {
-    // Primary endpoint: /search
+    // Primary endpoint: /search (Main series inventory pool)
     const response = await axios.post(`${AIRIQ_BASE_URL}/search`, searchBody, { headers, timeout: 15000 });
     return response.data;
   } catch (error: any) {
@@ -132,7 +179,7 @@ export const searchFlightsAirIq = async (payload: AirIqSearchPayload): Promise<a
       const fbResponse = await axios.post(`${AIRIQ_BASE_URL}/suppliersearch`, searchBody, { headers, timeout: 15000 });
       return fbResponse.data;
     } catch (fbError: any) {
-      console.warn('AirIQ Search failed on both endpoints:', error.response?.data?.message || error.message);
+      console.warn('AirIQ Search failed on both /search and /suppliersearch:', error.response?.data?.message || error.message);
       throw error;
     }
   }
@@ -142,71 +189,88 @@ export interface AirIqPassengerInfo {
   title: string; // Mr. | Mrs. | Ms. | Mstr. | Miss
   first_name: string;
   last_name: string;
-  dob: string; // YYYY/MM/DD
-  passport_number: string;
-  passport_expirydate: string; // YYYY/MM/DD
-  passport_issuing_country_code: string;
-  nationality: string;
+  dob?: string; // YYYY/MM/DD
+  passport_number?: string;
+  passport_expirydate?: string; // YYYY/MM/DD
+  passport_issuing_country_code?: string;
+  nationality?: string;
+  travel_with?: string; // for infants, e.g. "1"
 }
 
 export interface AirIqBookPayload {
   ticket_id: string;
-  total_pax: number;
-  adult: number;
-  child: number;
-  infant: number;
+  total_pax: string | number;
+  adult: string | number;
+  child: string | number;
+  infant: string | number;
   adult_info: AirIqPassengerInfo[];
   child_info: AirIqPassengerInfo[];
   infant_info: AirIqPassengerInfo[];
 }
 
 /**
- * Books flight on AirIQ
+ * Books flight on AirIQ using /book (with /supplierbook fallback)
  */
 export const bookFlightAirIq = async (payload: AirIqBookPayload): Promise<any> => {
   const token = await authenticateAirIq();
+  const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
   const headers = {
     'api-key': AIRIQ_API_KEY,
-    'Authorization': token,
+    'Authorization': authHeader,
     'Content-Type': 'application/json'
+  };
+
+  // Ensure string counts per AirIQ API documentation
+  const formattedPayload = {
+    ticket_id: String(payload.ticket_id),
+    total_pax: String(payload.total_pax),
+    adult: String(payload.adult),
+    child: String(payload.child),
+    infant: String(payload.infant),
+    adult_info: payload.adult_info,
+    child_info: payload.child_info,
+    infant_info: payload.infant_info
   };
 
   try {
     // Primary endpoint: /book
-    const response = await axios.post(`${AIRIQ_BASE_URL}/book`, payload, { headers, timeout: 25000 });
+    const response = await axios.post(`${AIRIQ_BASE_URL}/book`, formattedPayload, { headers, timeout: 25000 });
     return response.data;
   } catch (error: any) {
     // Fallback endpoint: /supplierbook
     try {
-      const fbResponse = await axios.post(`${AIRIQ_BASE_URL}/supplierbook`, payload, { headers, timeout: 25000 });
+      const fbResponse = await axios.post(`${AIRIQ_BASE_URL}/supplierbook`, formattedPayload, { headers, timeout: 25000 });
       return fbResponse.data;
     } catch (fbError: any) {
-      console.error('AirIQ Book Failed:', error.response?.data || error.message);
+      console.error('AirIQ Book Failed on both /book and /supplierbook:', error.response?.data || error.message);
       throw error;
     }
   }
 };
 
 /**
- * Retrieves confirmed ticket from AirIQ by booking_id
+ * Retrieves confirmed ticket from AirIQ by booking_id using /ticket (with /supplierticket fallback)
  */
 export const getTicketAirIq = async (bookingId: string): Promise<any> => {
   const token = await authenticateAirIq();
+  const authHeader = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
   const headers = {
     'api-key': AIRIQ_API_KEY,
-    'Authorization': token,
+    'Authorization': authHeader,
     'Content-Type': 'application/json'
   };
 
   try {
+    // Primary endpoint: /ticket
     const response = await axios.get(`${AIRIQ_BASE_URL}/ticket?booking_id=${encodeURIComponent(bookingId)}`, { headers, timeout: 12000 });
     return response.data;
   } catch (error: any) {
+    // Fallback endpoint: /supplierticket
     try {
       const fbResponse = await axios.get(`${AIRIQ_BASE_URL}/supplierticket?booking_id=${encodeURIComponent(bookingId)}`, { headers, timeout: 12000 });
       return fbResponse.data;
     } catch (fbError: any) {
-      console.warn('AirIQ getTicket warning:', error.response?.data || error.message);
+      console.warn('AirIQ getTicket warning on both endpoints:', error.response?.data || error.message);
       return null;
     }
   }

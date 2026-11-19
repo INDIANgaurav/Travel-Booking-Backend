@@ -1,11 +1,25 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import User from '../users/user.model';
 import { getAuth } from 'firebase-admin/auth';
 import { getApps } from 'firebase-admin/app';
 import { sendOTP, sendWelcomeEmail } from '../../utils/email.service';
 import { getIo } from '../../config/socket';
 import { createAdminNotification } from '../notifications/notification.controller';
+import { checkLoginFailureLock, recordLoginFailure, clearLoginFailures } from '../../middleware/authRateLimit.middleware';
+
+const generateSecureOtp = (): { plainOtp: string; hashedOtp: string } => {
+  const plainOtp = crypto.randomInt(100000, 1000000).toString();
+  const hashedOtp = crypto.createHash('sha256').update(plainOtp).digest('hex');
+  return { plainOtp, hashedOtp };
+};
+
+const verifyOtpMatch = (storedOtp: string | undefined, inputOtp: string): boolean => {
+  if (!storedOtp || !inputOtp) return false;
+  const hashedInput = crypto.createHash('sha256').update(String(inputOtp).trim()).digest('hex');
+  return storedOtp === hashedInput || storedOtp === String(inputOtp).trim();
+};
 
 const generateAccessToken = (id: string) => {
   return jwt.sign({ id }, process.env.JWT_SECRET as string, {
@@ -95,18 +109,14 @@ export const registerUser = async (req: Request, res: Response) => {
       // Auto-dispatch OTP email synchronously before sending response
       const config = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
       const expiryMinutes = config?.otpTime || 10;
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const { plainOtp, hashedOtp } = generateSecureOtp();
       
-      user.otp = otpCode;
+      user.otp = hashedOtp;
       user.otpExpiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
       await user.save();
       
-      console.log(`\n======================================================`);
-      console.log(`🔑 [TESTING] GENERATED OTP FOR ${user.email} : ${otpCode}`);
-      console.log(`======================================================\n`);
-      
       try {
-        await sendOTP(user.email, otpCode, expiryMinutes);
+        await sendOTP(user.email, plainOtp, expiryMinutes);
       } catch (emailError: any) {
         // If it's a new user and email fails, delete them so they aren't stuck
         if (user.isNew || !user.isEmailVerified) {
@@ -215,6 +225,15 @@ export const registerAgent = async (req: Request, res: Response) => {
 export const loginUser = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
+    const lock = await checkLoginFailureLock(req, email);
+    if (lock.locked) {
+      res.setHeader('Retry-After', String(lock.retryAfterSeconds));
+      return res.status(429).json({
+        message: lock.message,
+        retryAfterSeconds: lock.retryAfterSeconds,
+      });
+    }
+
     const user = await User.findOne({ email });
 
     if (user && (await user.matchPassword(password))) {
@@ -237,8 +256,10 @@ export const loginUser = async (req: Request, res: Response) => {
         });
       }
 
+      await clearLoginFailures(req, email);
       sendTokenResponse(user, 200, res);
     } else {
+      await recordLoginFailure(req, email);
       res.status(401).json({ message: 'Invalid email or password' });
     }
   } catch (error: any) {
@@ -320,13 +341,15 @@ export const googleAuth = async (req: Request, res: Response) => {
   }
 };
 
-import crypto from 'crypto';
-
 export const forgotPassword = async (req: Request, res: Response) => {
   try {
     const user = await User.findOne({ email: req.body.email });
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      // Prevent User Enumeration attacks
+      return res.status(200).json({ 
+        success: true, 
+        message: 'If this email is registered, a verification OTP has been sent.' 
+      });
     }
 
     const { portal } = req.body;
@@ -346,13 +369,13 @@ export const forgotPassword = async (req: Request, res: Response) => {
 
     const config = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
     const expiryMinutes = config?.otpTime || 10;
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const { plainOtp, hashedOtp } = generateSecureOtp();
 
-    user.otp = otpCode;
+    user.otp = hashedOtp;
     user.otpExpiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
     await user.save();
 
-    await sendOTP(user.email, otpCode, expiryMinutes);
+    await sendOTP(user.email, plainOtp, expiryMinutes);
 
     res.status(200).json({ 
       success: true, 
@@ -381,7 +404,7 @@ export const resetPassword = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'OTP has expired' });
     }
 
-    if (user.otp !== otp) {
+    if (!verifyOtpMatch(user.otp, otp)) {
       return res.status(400).json({ message: 'Invalid OTP' });
     }
 
@@ -414,7 +437,7 @@ export const verifyRegistration = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Email is already verified' });
     }
 
-    if (!user.otp || user.otp !== otp) {
+    if (!verifyOtpMatch(user.otp, otp)) {
       return res.status(400).json({ message: 'Invalid OTP' });
     }
 
