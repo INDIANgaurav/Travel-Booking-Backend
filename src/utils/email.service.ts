@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import puppeteer from 'puppeteer';
+import fs from 'fs';
 dotenv.config();
 
 const transporter = nodemailer.createTransport({
@@ -301,11 +302,24 @@ const generatePDFTicket = async (booking: any, agentName: string): Promise<Buffe
 
   let browser;
   try {
-    browser = await puppeteer.launch({ 
+    const launchOptions: any = { 
       headless: true,
-      executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      args: ['--no-sandbox', '--disable-setuid-sandbox'] 
-    });
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] 
+    };
+
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    } else if (process.platform === 'win32') {
+      const winChrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+      const winChromeX86 = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+      if (fs.existsSync(winChrome)) {
+        launchOptions.executablePath = winChrome;
+      } else if (fs.existsSync(winChromeX86)) {
+        launchOptions.executablePath = winChromeX86;
+      }
+    }
+
+    browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
     
     // Set content and wait for network idle to ensure tailwind loads

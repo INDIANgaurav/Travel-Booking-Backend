@@ -216,10 +216,23 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/v1/b2b', b2bApiRoutes);
 app.use('/api/festive-banners', festiveBannerRoutes);
 
-// Global Error Handler to catch [object Object] issues
+// Crash Guards for Unhandled Rejections and Exceptions
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error: Error) => {
+  console.error('Uncaught Exception:', error);
+});
+
+// Global Error Handler (Sanitized for Production)
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("Global Error:", err);
-  res.status(500).json({ message: err.message || "Internal Server Error", error: err });
+  const isDev = process.env.NODE_ENV !== 'production';
+  res.status(err.status || 500).json({ 
+    message: err.message || "Internal Server Error", 
+    ...(isDev ? { stack: err.stack, error: err } : {}) 
+  });
 });
 
 const PORT = process.env.PORT || 5000;

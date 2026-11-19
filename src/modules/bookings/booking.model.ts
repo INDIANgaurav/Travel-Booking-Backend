@@ -166,6 +166,7 @@ const bookingSchema = new Schema<IBooking>(
 );
 
 bookingSchema.index({ user: 1, createdAt: -1 });
+bookingSchema.index({ type: 1, status: 1, createdAt: -1 });
 bookingSchema.index({ status: 1 });
 bookingSchema.index({ type: 1 });
 bookingSchema.index({ 'details.pnr': 1 });

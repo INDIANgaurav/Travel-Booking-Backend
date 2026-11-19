@@ -506,15 +506,18 @@ export const createFlightBooking = async (req: AuthRequest, res: Response) => {
         });
       }
 
-      try {
-        await sendBookingConfirmationEmail(
-          req.user.email,
-          req.user.name || 'Agent',
-          newBooking
-        );
-      } catch (e) {
-        console.error('Failed to send booking email:', e);
-      }
+      // Send confirmation email asynchronously without blocking booking response
+      setImmediate(async () => {
+        try {
+          await sendBookingConfirmationEmail(
+            req.user.email,
+            req.user.name || 'Agent',
+            newBooking
+          );
+        } catch (e) {
+          console.error('Failed to send booking email:', e);
+        }
+      });
 
       return res.status(201).json({
         booking: newBooking,
@@ -1070,15 +1073,18 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
         );
       }
 
-      try {
-        await sendBookingConfirmationEmail(
-          req.user.email,
-          req.user.name || 'Agent',
-          booking
-        );
-      } catch (e) {
-        console.error('Failed to send booking email:', e);
-      }
+      // Send confirmation email asynchronously without blocking verification response
+      setImmediate(async () => {
+        try {
+          await sendBookingConfirmationEmail(
+            req.user.email,
+            req.user.name || 'Agent',
+            booking
+          );
+        } catch (e) {
+          console.error('Failed to send booking email:', e);
+        }
+      });
       return res.status(200).json({ message: 'Payment verified successfully and booking confirmed', booking });
     }
   } catch (error: any) {
