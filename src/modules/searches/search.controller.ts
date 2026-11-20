@@ -228,9 +228,9 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         const Markup = require('../agents/markup.model').Markup;
         agentMarkupData = await Markup.findOne({ 
           agentId, 
-          product: 'flights',
+          product: { $regex: new RegExp('^flight', 'i') },
           status: 'ACTIVE' 
-        });
+        }).sort({ createdAt: -1 });
       }
     } catch (err) {
       console.error("Error fetching supplier or markup data", err);
@@ -346,11 +346,15 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     // Helper to calculate agent markup
     const applyAgentMarkup = (basePrice: number) => {
       let markupAmount = 0;
-      if (agentMarkupData) {
-        if (agentMarkupData.type === 'fixed') {
-          markupAmount = agentMarkupData.value;
-        } else if (agentMarkupData.type === 'percentage') {
-          markupAmount = (basePrice * agentMarkupData.value) / 100;
+      if (agentMarkupData && agentMarkupData.value) {
+        const val = Number(agentMarkupData.value) || 0;
+        const isPercent = agentMarkupData.type === 'percentage' || (agentMarkupData as any).markupType === 'percentage';
+        
+        if (isPercent) {
+          markupAmount = (basePrice * val) / 100;
+        } else {
+          // Fixed amount per passenger (e.g. ₹350)
+          markupAmount = val;
         }
         
         // Enforce min/max if present

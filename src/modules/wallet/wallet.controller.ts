@@ -549,7 +549,7 @@ export const adminRechargeWallet = async (req: AuthRequest, res: Response) => {
       user: targetUser._id,
       amount: totalCredit,
       type: 'CREDIT',
-      description: `Wallet recharge via ${paymentMode || 'Admin'} - ${remarks || ''}`.trim(),
+      description: remarks ? `Wallet recharge via ${paymentMode || 'Admin'} - ${remarks.trim()}` : `Wallet recharge via ${paymentMode || 'Admin'}`.trim(),
       balanceAfter: targetUser.walletBalance,
       referenceId: `ADM-RECHARGE-${Date.now()}`,
     });
