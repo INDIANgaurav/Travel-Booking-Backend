@@ -7,12 +7,26 @@ import { DebitNote } from '../wallet/debitNote.model';
 import { Markup } from '../agents/markup.model';
 import { BankDetails } from '../agents/bankDetails.model';
 
+const getPaginationParams = (req: Request) => {
+  const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 50));
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
+};
+
 export const getAllOfflineBookings = async (req: Request, res: Response) => {
   try {
-    const data = await OfflineBooking.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
+    const { limit, skip } = getPaginationParams(req);
+    const data = await OfflineBooking.find()
+      .populate('agentId', 'name companyName email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
+
 export const updateOfflineBookingStatus = async (req: Request, res: Response) => {
   try {
     const updated = await OfflineBooking.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
@@ -22,10 +36,17 @@ export const updateOfflineBookingStatus = async (req: Request, res: Response) =>
 
 export const getAllTaxInvoices = async (req: Request, res: Response) => {
   try {
-    const data = await TaxInvoice.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
+    const { limit, skip } = getPaginationParams(req);
+    const data = await TaxInvoice.find()
+      .populate('agentId', 'name companyName email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
+
 export const updateTaxInvoiceStatus = async (req: Request, res: Response) => {
   try {
     const updated = await TaxInvoice.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
@@ -35,10 +56,17 @@ export const updateTaxInvoiceStatus = async (req: Request, res: Response) => {
 
 export const getAllGstInvoices = async (req: Request, res: Response) => {
   try {
-    const data = await GstInvoice.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
+    const { limit, skip } = getPaginationParams(req);
+    const data = await GstInvoice.find()
+      .populate('agentId', 'name companyName email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
+
 export const updateGstInvoiceStatus = async (req: Request, res: Response) => {
   try {
     const updated = await GstInvoice.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
@@ -48,10 +76,17 @@ export const updateGstInvoiceStatus = async (req: Request, res: Response) => {
 
 export const getAllCreditNotes = async (req: Request, res: Response) => {
   try {
-    const data = await CreditNote.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
+    const { limit, skip } = getPaginationParams(req);
+    const data = await CreditNote.find()
+      .populate('agentId', 'name companyName email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
+
 export const updateCreditNoteStatus = async (req: Request, res: Response) => {
   try {
     const updated = await CreditNote.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
@@ -61,10 +96,17 @@ export const updateCreditNoteStatus = async (req: Request, res: Response) => {
 
 export const getAllDebitNotes = async (req: Request, res: Response) => {
   try {
-    const data = await DebitNote.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
+    const { limit, skip } = getPaginationParams(req);
+    const data = await DebitNote.find()
+      .populate('agentId', 'name companyName email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
+
 export const updateDebitNoteStatus = async (req: Request, res: Response) => {
   try {
     const updated = await DebitNote.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
@@ -74,10 +116,17 @@ export const updateDebitNoteStatus = async (req: Request, res: Response) => {
 
 export const getAllMarkups = async (req: Request, res: Response) => {
   try {
-    const data = await Markup.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
+    const { limit, skip } = getPaginationParams(req);
+    const data = await Markup.find()
+      .populate('agentId', 'name companyName email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
+
 export const updateMarkupStatus = async (req: Request, res: Response) => {
   try {
     const updated = await Markup.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
@@ -87,10 +136,17 @@ export const updateMarkupStatus = async (req: Request, res: Response) => {
 
 export const getAllBankDetails = async (req: Request, res: Response) => {
   try {
-    const data = await BankDetails.find().populate('agentId', 'name companyName email').sort({ createdAt: -1 }).lean();
+    const { limit, skip } = getPaginationParams(req);
+    const data = await BankDetails.find()
+      .populate('agentId', 'name companyName email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(data);
   } catch (error: any) { res.status(500).json({ message: error.message }); }
 };
+
 export const updateBankDetailsStatus = async (req: Request, res: Response) => {
   try {
     const updated = await BankDetails.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });

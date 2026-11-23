@@ -46,62 +46,128 @@ export const getUsers = async (req: Request, res: Response) => {
 
 export const getDashboardStats = async (req: Request, res: Response) => {
   try {
-    const totalUsers = await User.countDocuments({ roles: { $ne: 'SUPER_ADMIN' } });
-    const agents = await User.find({ roles: 'B2B_AGENT' }).select('name walletBalance creditBalance agentStatus');
-    
-    const totalWalletBalance = agents.reduce((sum, a) => sum + (a.walletBalance || 0), 0);
-    const totalCreditBalance = agents.reduce((sum, a) => sum + (a.creditBalance || 0), 0);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const currentYear = new Date().getFullYear();
+    const startOfYear = new Date(currentYear, 0, 1);
+
+    // Run aggregations directly in MongoDB engine to strictly keep Node.js heap < 100KB
+    const [totalUsers, agentFundsAgg, bookingStatsAgg] = await Promise.all([
+      User.countDocuments({ roles: { $ne: 'SUPER_ADMIN' } }),
+      User.aggregate([
+        { $match: { roles: 'B2B_AGENT' } },
+        {
+          $group: {
+            _id: null,
+            totalWallet: { $sum: { $ifNull: ['$walletBalance', 0] } },
+            totalCredit: { $sum: { $ifNull: ['$creditBalance', 0] } }
+          }
+        }
+      ]),
+      Booking.aggregate([
+        { $match: { status: 'CONFIRMED' } },
+        {
+          $facet: {
+            totals: [
+              {
+                $group: {
+                  _id: null,
+                  totalBookings: { $sum: 1 },
+                  totalRevenue: { $sum: { $ifNull: ['$totalAmount', 0] } }
+                }
+              }
+            ],
+            byCategory: [
+              {
+                $group: {
+                  _id: '$type',
+                  revenue: { $sum: { $ifNull: ['$totalAmount', 0] } }
+                }
+              }
+            ],
+            byMonth: [
+              {
+                $match: {
+                  createdAt: { $gte: startOfYear }
+                }
+              },
+              {
+                $group: {
+                  _id: { $month: '$createdAt' },
+                  revenue: { $sum: { $ifNull: ['$totalAmount', 0] } }
+                }
+              }
+            ],
+            topAgents: [
+              { $match: { user: { $exists: true, $ne: null } } },
+              {
+                $group: {
+                  _id: '$user',
+                  sales: { $sum: 1 }
+                }
+              },
+              { $sort: { sales: -1 } },
+              { $limit: 5 }
+            ]
+          }
+        }
+      ])
+    ]);
+
+    const totalWalletBalance = agentFundsAgg[0]?.totalWallet || 0;
+    const totalCreditBalance = agentFundsAgg[0]?.totalCredit || 0;
     const systemFunds = totalWalletBalance + totalCreditBalance;
 
-    const bookings = await Booking.find({ status: 'CONFIRMED' }).select('totalAmount type createdAt user');
-    
-    const revenueByCategory = { FLIGHT: 0, HOTEL: 0, PACKAGE: 0, BUS: 0 };
-    let totalRevenue = 0;
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const revMap: Record<string, number> = {};
-    const agentSalesMap: Record<string, number> = {};
+    const bookingFacet = bookingStatsAgg[0] || {};
+    const totalBookings = bookingFacet.totals?.[0]?.totalBookings || 0;
+    const totalRevenue = bookingFacet.totals?.[0]?.totalRevenue || 0;
 
-    bookings.forEach(b => {
-      totalRevenue += b.totalAmount || 0;
-      if (b.type && (revenueByCategory as any)[b.type] !== undefined) {
-        (revenueByCategory as any)[b.type] += b.totalAmount || 0;
-      }
-      
-      if (b.createdAt) {
-        const monthName = months[b.createdAt.getMonth()];
-        revMap[monthName] = (revMap[monthName] || 0) + (b.totalAmount || 0);
-      }
-
-      if (b.user) {
-        agentSalesMap[b.user.toString()] = (agentSalesMap[b.user.toString()] || 0) + 1;
+    // Category breakdown
+    const categoryRevMap: Record<string, number> = { FLIGHT: 0, HOTEL: 0, PACKAGE: 0, BUS: 0 };
+    (bookingFacet.byCategory || []).forEach((c: any) => {
+      if (c._id && categoryRevMap[c._id] !== undefined) {
+        categoryRevMap[c._id] = c.revenue;
       }
     });
 
-    const monthlyRevenue = Object.entries(revMap).map(([name, revenue]) => ({ name, revenue }));
-    monthlyRevenue.sort((a, b) => months.indexOf(a.name) - months.indexOf(b.name));
-    if (monthlyRevenue.length === 0) monthlyRevenue.push({ name: months[new Date().getMonth()], revenue: 0 });
+    const revenueByCategory = [
+      { name: 'Flights', value: categoryRevMap.FLIGHT, color: '#3b82f6' },
+      { name: 'Hotels', value: categoryRevMap.HOTEL, color: '#10b981' },
+      { name: 'Packages', value: categoryRevMap.PACKAGE, color: '#8b5cf6' },
+      { name: 'Buses', value: categoryRevMap.BUS, color: '#f59e0b' },
+    ].filter(item => item.value > 0);
 
-    const userIdsWithSales = Object.keys(agentSalesMap);
-    const usersWithSales = await User.find({ _id: { $in: userIdsWithSales } }).select('name companyName');
-    
-    const topAgents = usersWithSales.map(u => ({
-      name: u.companyName || u.name,
-      sales: agentSalesMap[u._id.toString()] || 0
-    })).sort((a, b) => b.sales - a.sales).slice(0, 5);
+    // Monthly breakdown
+    const monthlyMap: Record<number, number> = {};
+    (bookingFacet.byMonth || []).forEach((m: any) => {
+      monthlyMap[m._id] = m.revenue; // m._id is 1-12
+    });
+
+    const monthlyRevenue = months.map((name, idx) => ({
+      name,
+      revenue: monthlyMap[idx + 1] || 0
+    }));
+
+    // Top Agents populated names
+    const topAgentGroups = bookingFacet.topAgents || [];
+    const topAgentUserIds = topAgentGroups.map((a: any) => a._id);
+    const topAgentUsers = topAgentUserIds.length > 0
+      ? await User.find({ _id: { $in: topAgentUserIds } }).select('name companyName').lean()
+      : [];
+    const userMap = new Map(topAgentUsers.map((u: any) => [u._id.toString(), u.companyName || u.name]));
+
+    const topAgents = topAgentGroups.map((a: any) => ({
+      name: userMap.get(a._id.toString()) || 'Agent',
+      sales: a.sales
+    }));
 
     res.json({
       totalUsers,
-      totalBookings: bookings.length,
+      totalBookings,
       totalRevenue,
       systemFunds,
       totalWalletBalance,
       totalCreditBalance,
-      revenueByCategory: [
-        { name: 'Flights', value: revenueByCategory.FLIGHT, color: '#3b82f6' },
-        { name: 'Hotels', value: revenueByCategory.HOTEL, color: '#10b981' },
-        { name: 'Packages', value: revenueByCategory.PACKAGE, color: '#8b5cf6' },
-        { name: 'Buses', value: revenueByCategory.BUS, color: '#f59e0b' },
-      ].filter(item => item.value > 0),
+      revenueByCategory,
       monthlyRevenue,
       topAgents
     });

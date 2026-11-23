@@ -90,6 +90,9 @@ class BoundedLRUCache<K, V> {
 // In-memory cache capped at 150 search result sets and 50MB max heap memory
 const flightSearchCache = new BoundedLRUCache<string, { data: any, timestamp: number }>(150, 50 * 1024 * 1024);
 
+// Request coalescing map: deduplicates concurrent in-flight search requests for the identical route & date
+const inFlightSearches = new Map<string, Promise<any>>();
+
 /**
  * TEMPORARY TOGGLE: If AIRIQ_ONLY_MODE is true in environment,
  * block manual FD (Series Fares), Nexus DMC, GAPI, and DB Inventory flights,
@@ -218,50 +221,28 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
     const segment = `${originIata}-${destinationIata}-${formattedDate}`;
     const pax = `${adultCount}-${childCount}-${infantCount}`;
 
-    let nexusSupplier: any = null;
-    let agentMarkupData: any = null;
-    try {
-      nexusSupplier = await Supplier.findOne({ name: 'Nexus DMC' }).lean();
-      
-      // Fetch agent's active flight markup if logged in
-      if (isAgent && agentId) {
-        const Markup = require('../agents/markup.model').Markup;
-        agentMarkupData = await Markup.findOne({ 
-          agentId, 
-          product: { $regex: new RegExp('^flight', 'i') },
-          status: 'ACTIVE' 
-        }).sort({ createdAt: -1 });
-      }
-    } catch (err) {
-      console.error("Error fetching supplier or markup data", err);
-    }
-    
-    let gapiSupplier: any = null;
-    try {
-      gapiSupplier = await Supplier.findOne({ name: 'GAPI INFOTECH' }).lean();
-    } catch(e) {}
+    // Concurrently fetch suppliers, commission plans, and active suppliers in parallel
+    const [nexusSupplier, gapiSupplier, airIqSupplierDb, commissionPolicies, allSuppliers] = await Promise.all([
+      Supplier.findOne({ name: 'Nexus DMC' }).lean().catch(() => null),
+      Supplier.findOne({ name: 'GAPI INFOTECH' }).lean().catch(() => null),
+      Supplier.findOne({ name: { $in: ['Air Iq', 'AirIQ', 'AIRIQ'] } }).lean().catch(() => null),
+      (async () => {
+        try {
+          const CommissionPlan = require('../commissions/commission.model').CommissionPlan;
+          return await CommissionPlan.find({ status: true, category: 'FLIGHT' }).sort({ priority: 1 }).lean();
+        } catch (e) { return []; }
+      })(),
+      Supplier.find({ isActive: true }).lean().catch(() => [])
+    ]);
 
-    let airIqSupplier: any = null;
-    try {
-      airIqSupplier = await Supplier.findOne({ name: { $in: ['Air Iq', 'AirIQ', 'AIRIQ'] } }).lean();
-    } catch(e) {}
-
+    let airIqSupplier = airIqSupplierDb;
     if (isAirIqOnlyMode() && !airIqSupplier) {
       airIqSupplier = {
         name: 'Air Iq',
         isActive: true,
         searchEnabled: true,
         commission: { percentage: 0, fixedAmount: 0 }
-      };
-    }
-
-    let commissionPolicies: any[] = [];
-    try {
-      const CommissionPlan = require('../commissions/commission.model').CommissionPlan;
-      commissionPolicies = await CommissionPlan.find({ status: true, category: 'FLIGHT' })
-        .sort({ priority: 1 }).lean();
-    } catch (e) {
-      console.error("Error fetching commission policies", e);
+      } as any;
     }
 
     let cugMappings: any[] = [];
@@ -285,7 +266,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       const supplierId = supplierObj._id;
       const supplierCugEnabled = supplierObj.cugEnabled;
 
-      const mapping = cugMappings.find((m: any) => m.supplier.toString() === supplierId.toString());
+      const mapping = cugMappings.find((m: any) => m.supplier && m.supplier.toString() === supplierId.toString());
 
       if (supplierCugEnabled && !mapping) return false;
 
@@ -310,7 +291,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       
       if (!commissionPolicies || commissionPolicies.length === 0) return { markup: 0, commission: 0 };
       
-      const policy = commissionPolicies.find(p => p.airline === 'ALL' || p.airline === airlineCode);
+      const policy = commissionPolicies.find((p: any) => p.airline === 'ALL' || p.airline === airlineCode);
 
       if (policy && policy.fees) {
         if (policy.fees.hiddenMarkup_checkbox) {
@@ -343,546 +324,449 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       return { markup: Math.round(adminMarkup), commission: Math.round(adminCommission) };
     };
 
-    // Helper to calculate agent markup
-    const applyAgentMarkup = (basePrice: number) => {
-      let markupAmount = 0;
-      if (agentMarkupData && agentMarkupData.value) {
-        const val = Number(agentMarkupData.value) || 0;
-        const isPercent = agentMarkupData.type === 'percentage' || (agentMarkupData as any).markupType === 'percentage';
-        
-        if (isPercent) {
-          markupAmount = (basePrice * val) / 100;
-        } else {
-          // Fixed amount per passenger (e.g. ₹350)
-          markupAmount = val;
-        }
-        
-        // Enforce min/max if present
-        if (agentMarkupData.min && markupAmount < agentMarkupData.min) markupAmount = agentMarkupData.min;
-        if (agentMarkupData.max && markupAmount > agentMarkupData.max) markupAmount = agentMarkupData.max;
-      }
-      return Math.round(markupAmount * (adultCount + childCount));
+    const getAirlineCode = (name: string) => {
+      const n = (name || '').toLowerCase();
+      if (n.includes('akasa')) return 'QP';
+      if (n.includes('indigo')) return '6E';
+      if (n.includes('spicejet')) return 'SG';
+      if (n.includes('air india express')) return 'IX';
+      if (n.includes('air india')) return 'AI';
+      if (n.includes('vistara')) return 'UK';
+      if (n.includes('lufthansa')) return 'LH';
+      if (n.includes('emirates')) return 'EK';
+      if (n.includes('qatar')) return 'QR';
+      if (n.includes('etihad')) return 'EY';
+      if (n.includes('singapore')) return 'SQ';
+      if (n.includes('british')) return 'BA';
+      return 'AI';
     };
 
-    let searchResult: any = null;
-    if (!isAirIqOnlyMode() && nexusSupplier && nexusSupplier.isActive) {
+    // Sub-Task 1: Nexus DMC
+    const fetchNexus = async (): Promise<any[]> => {
+      if (isAirIqOnlyMode() || !nexusSupplier || !nexusSupplier.isActive) return [];
       try {
-        searchResult = await searchFlightsNexus(segment, pax);
-      } catch (err: any) {
-        console.error("NexusDMC API Error:", err);
-        // Don't return 500 here! Let it continue to fetch Series Fares.
-        searchResult = null;
-      }
-    }
-
-    let flights: any[] = [];
-    
-    if (!searchResult || !searchResult.success || !searchResult._data || !searchResult._data.flights || searchResult._data.flights.length === 0) {
-      console.log('NexusDMC Empty/Failed Response for', segment, 'Pax:', pax);
-      // Don't return early, we might still have Series Fares!
-    } else {
-      const nexusFlights = searchResult._data.flights;
-      
-      // Map NexusDMC offers to our frontend's expected Flight schema
-      flights = nexusFlights.map((offer: any) => {
-        const flightSegment = offer.segments[0];
-        const leg = flightSegment.legs[0]; // First leg for departure
-        const lastLeg = flightSegment.legs[flightSegment.legs.length - 1]; // Last leg for arrival
-        
-        const depTime = new Date(leg.departure_time);
-        const arrTime = new Date(lastLeg.arrival_time);
-        const durationMinutes = flightSegment.duration;
-
-        let basePrice = offer.total_price;
-        
-        // Calculate Commission
-        let finalCommission = 0;
-        if (nexusSupplier && nexusSupplier.commission) {
-          const percComm = (basePrice * nexusSupplier.commission.percentage) / 100;
-          finalCommission = Math.max(percComm, nexusSupplier.commission.fixedAmount);
+        const searchResult = await searchFlightsNexus(segment, pax);
+        if (!searchResult || !searchResult.success || !searchResult._data || !searchResult._data.flights || searchResult._data.flights.length === 0) {
+          return [];
         }
-        
-        const revPolicy = applyAdminRevenuePolicy(basePrice, leg.airline);
-        if (revPolicy.commission > 0) {
-           finalCommission = revPolicy.commission;
-        }
-        
-        const price = Math.round(basePrice + finalCommission + revPolicy.markup);
+        const nexusFlights = searchResult._data.flights;
+        const mapped = nexusFlights.map((offer: any) => {
+          const flightSegment = offer.segments[0];
+          const leg = flightSegment.legs[0];
+          const lastLeg = flightSegment.legs[flightSegment.legs.length - 1];
+          const durationMinutes = flightSegment.duration;
 
-        return {
-          _id: offer.key, // Use NexusDMC key so we can book it later
-          airline: leg.airline, // Just the code for now, UI might need mapping
-          airlineLogo: `https://pics.avs.io/200/200/${leg.airline}.png`,
-          flightNumber: `${leg.airline}-${leg.flight_number}`,
-          departureCity: leg.origin,
-          departureAirportCode: leg.origin,
-          arrivalCity: lastLeg.destination,
-          arrivalAirportCode: lastLeg.destination,
-          departureTime: leg.departure_time,
-          arrivalTime: lastLeg.arrival_time,
-          durationMinutes: durationMinutes,
-          price: price, // Marked up price for UI
-          stops: flightSegment.legs.length - 1,
-          nexus_query: searchResult._data.query, // Need to save this to pass back for Check Avail / Booking
-          nexus_total_price: offer.total_price, // The EXACT price Nexus expects in Book API
-          seatsAvailable: offer.seats_available,
-          adultPrice: offer.adult_price + (finalCommission / (adultCount + childCount + infantCount)), // Distributed roughly
-          childPrice: offer.child_price + (finalCommission / (adultCount + childCount + infantCount)),
-          infantPrice: offer.infant_price,
-          checkinBaggage: offer.checkin_baggage,
-          cabinBaggage: offer.cabin_baggage,
-          cabinClass: offer.cabin_type,
-          inputRequirements: searchResult._data.input_requirements,
-          refundable: offer.refundable ? 'Refundable' : 'Non Refundable',
-          fareRules: offer.cancellation_policy ? [{ fareRuleDetail: offer.cancellation_policy }] : [],
-          supplierId: nexusSupplier?._id, // Attach supplierId for pre-booking validation
-          agentCommission: finalCommission,
-          agentMarkup: 0
-        };
-      });
-
-      // Filter Nexus flights based on CUG mappings for everyone (B2C and B2B)
-      flights = flights.filter(f => isFlightAllowedByCUG(nexusSupplier, f.airline));
-    }
-
-    // Merge active Series Fares matching route
-    if (!isAirIqOnlyMode()) {
-      try {
-        const SeriesFare = require('../seriesFare/seriesFare.model').default;
-      
-      const dateStr = (targetDate instanceof Date && !isNaN(targetDate.getTime()))
-        ? targetDate.toISOString().split('T')[0]
-        : String(targetDate || '').split('T')[0];
-
-      const exactDayStart = new Date(`${dateStr}T00:00:00.000Z`);
-      const startOfDay = new Date(exactDayStart.getTime() - (6 * 3600 * 1000)); // covers IST midnight (18:30 UTC previous day)
-      const endOfDay = new Date(exactDayStart.getTime() + (23 * 3600 * 1000 + 59 * 60 * 1000));  // strictly ends before next day 00:00 UTC
-
-      const paxCount = adultCount + childCount;
-      const isTestMode = queryParams.isTestFlight === 'true' || queryParams.sandbox === 'true' || queryParams.mode === 'TEST';
-
-      const sfFilter: any = {
-        origin: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
-        destination: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
-        status: { $regex: new RegExp('^Active$', 'i') },
-        travelDate: { $gte: startOfDay, $lte: endOfDay },
-        availableSeats: { $gte: paxCount },
-        isTestFlight: isTestMode ? true : { $ne: true }
-      };
-
-      const seriesFares = await SeriesFare.find(sfFilter).lean();
-      // Fetch all active suppliers to match by name (supplierId in SF stores User._id, not Supplier._id)
-      const allSuppliers = await Supplier.find({ isActive: true }).lean();
-      
-      const getAirlineCode = (name: string) => {
-        const n = name.toLowerCase();
-        if (n.includes('akasa')) return 'QP';
-        if (n.includes('indigo')) return '6E';
-        if (n.includes('spicejet')) return 'SG';
-        if (n.includes('air india express')) return 'IX';
-        if (n.includes('air india')) return 'AI';
-        if (n.includes('vistara')) return 'UK';
-        if (n.includes('lufthansa')) return 'LH';
-        if (n.includes('emirates')) return 'EK';
-        if (n.includes('qatar')) return 'QR';
-        if (n.includes('etihad')) return 'EY';
-        if (n.includes('singapore')) return 'SQ';
-        if (n.includes('british')) return 'BA';
-        return 'AI'; // fallback
-      };
-      
-      const now = new Date();
-      let sfMapped = seriesFares
-        .filter((sf: any) => {
-          if (!sf.departureTime || !sf.arrivalTime || sf.departureTime === 'undefined' || sf.arrivalTime === 'undefined') {
-            return false;
+          let basePrice = offer.total_price;
+          let finalCommission = 0;
+          if (nexusSupplier && nexusSupplier.commission) {
+            const percComm = (basePrice * nexusSupplier.commission.percentage) / 100;
+            finalCommission = Math.max(percComm, nexusSupplier.commission.fixedAmount);
           }
-          const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '';
-          if (!dateStr) return false;
-          const depTime = `${dateStr}T${sf.departureTime}:00`;
-          const depDateObj = new Date(depTime);
-          if (isNaN(depDateObj.getTime())) return false;
+          const revPolicy = applyAdminRevenuePolicy(basePrice, leg.airline);
+          if (revPolicy.commission > 0) finalCommission = revPolicy.commission;
 
-          // In live production searches, filter out departed flights and flights whose booking window has closed
-          if (!isTestMode) {
-            const cutoffHours = Number(sf.closeBeforeDepartureHours) >= 0 ? Number(sf.closeBeforeDepartureHours) : 2;
-            const cutoffDays = Number(sf.closeBeforeDepartureDays) || 0;
-            const totalCutoffMs = (cutoffDays * 24 + cutoffHours) * 60 * 60 * 1000;
-            const closeCutoffTime = new Date(depDateObj.getTime() - totalCutoffMs);
-
-            if (now >= closeCutoffTime || now >= depDateObj) {
-              return false; // Flight has departed or booking cutoff window passed
-            }
-          }
-          return true;
-        })
-        .map((sf: any) => {
-        const dateStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
-        const depTime = `${dateStr}T${sf.departureTime}:00`;
-        const arrTime = `${dateStr}T${sf.arrivalTime}:00`;
-        
-        let depDateObj = new Date(depTime);
-        let arrDateObj = new Date(arrTime);
-        let calculatedDayChange = sf.dayChange || 0;
-        if (arrDateObj < depDateObj) {
-          arrDateObj.setDate(arrDateObj.getDate() + 1); // Arrival is next day
-          calculatedDayChange = 1;
-        }
-        const durationMinutes = Math.round((arrDateObj.getTime() - depDateObj.getTime()) / 60000);
-
-        const adtFare = Number(sf.adtFare ?? sf.amount) || 0;
-        const chdFare = Number(sf.chdFare) || 0;
-        const infFare = Number(sf.infFare) || 0;
-        const basePrice = Math.round((adtFare * adultCount) + (chdFare * childCount) + (infFare * infantCount));
-        
-        let uploaderCommission = (sf.agentCommission || 0) * (adultCount + childCount);
-        let adminCommission = 0;
-        let adminMarkupAmount = 0;
-        let agentMarkupAmount = applyAgentMarkup(basePrice);
-        
-        // Match supplier by name (case-insensitive) since supplierId field stores User._id not Supplier._id
-        const supplier = allSuppliers.find((s: any) => 
-          s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
-        );
-        
-        // Self-Consumption Bypass: If the logged-in agent/supplier is the uploader of this flight
-        const isSelfConsumption = isAgent && agentId && sf.supplierId && agentId.toString() === sf.supplierId.toString();
-        
-        if (isSelfConsumption) {
-          uploaderCommission = 0;
-          adminCommission = 0;
-          agentMarkupAmount = 0;
-        } else {
-          if (supplier && supplier.commission) {
-            const percComm = (basePrice * supplier.commission.percentage) / 100;
-            adminCommission = Math.max(percComm, supplier.commission.fixedAmount);
-          }
-          const revPolicy = applyAdminRevenuePolicy(basePrice, sf.airline);
-          if (revPolicy.commission > 0) adminCommission = revPolicy.commission;
-          adminMarkupAmount = revPolicy.markup;
-        }
-
-        // Base Price + Uploader Profit (if any) + Admin Commission + Admin Markup + Searching Agent's markup
-        const price = basePrice + uploaderCommission + adminCommission + adminMarkupAmount + agentMarkupAmount; 
-        
-        // Final agentCommission to pass to booking is what Admin & Uploader earn from this sale
-        const finalCommission = uploaderCommission + adminCommission;
-
-        let arrivalDateStr = dateStr;
-        if (arrDateObj < depDateObj) {
-          const nextDay = new Date(dateStr);
-          nextDay.setDate(nextDay.getDate() + 1);
-          arrivalDateStr = nextDay.toISOString().split('T')[0];
-        }
-        const formattedArrivalTime = `${arrivalDateStr}T${sf.arrivalTime}:00`;
-
-        const mappedSegments = (sf.segments && sf.segments.length > 0) ? sf.segments.map((s: any) => {
-          const sDepTime = s.departureTime && !s.departureTime.includes('T')
-            ? `${dateStr}T${s.departureTime}:00`
-            : (s.departureTime || depTime);
-
-          let sArrDateStr = dateStr;
-          if (s.departureTime && s.arrivalTime && s.arrivalTime < s.departureTime) {
-            const nextD = new Date(dateStr);
-            nextD.setDate(nextD.getDate() + 1);
-            sArrDateStr = nextD.toISOString().split('T')[0];
-          }
-          const sArrTime = s.arrivalTime && !s.arrivalTime.includes('T')
-            ? `${sArrDateStr}T${s.arrivalTime}:00`
-            : (s.arrivalTime || formattedArrivalTime);
+          const price = Math.round(basePrice + finalCommission + revPolicy.markup);
 
           return {
-            airline: s.airline || sf.airline,
-            flightNo: s.flightNo || sf.flightNo,
-            origin: s.origin,
-            destination: s.destination,
-            departureTime: sDepTime,
-            arrivalTime: sArrTime,
-            departureTerminal: s.departureTerminal || '',
-            arrivalTerminal: s.arrivalTerminal || ''
+            _id: offer.key,
+            airline: leg.airline,
+            airlineLogo: `https://pics.avs.io/200/200/${leg.airline}.png`,
+            flightNumber: `${leg.airline}-${leg.flight_number}`,
+            departureCity: leg.origin,
+            departureAirportCode: leg.origin,
+            arrivalCity: lastLeg.destination,
+            arrivalAirportCode: lastLeg.destination,
+            departureTime: leg.departure_time,
+            arrivalTime: lastLeg.arrival_time,
+            durationMinutes: durationMinutes,
+            price: price,
+            stops: flightSegment.legs.length - 1,
+            nexus_query: searchResult._data.query,
+            nexus_total_price: offer.total_price,
+            seatsAvailable: offer.seats_available,
+            adultPrice: offer.adult_price + (finalCommission / (adultCount + childCount + infantCount)),
+            childPrice: offer.child_price + (finalCommission / (adultCount + childCount + infantCount)),
+            infantPrice: offer.infant_price,
+            checkinBaggage: offer.checkin_baggage,
+            cabinBaggage: offer.cabin_baggage,
+            cabinClass: offer.cabin_type,
+            inputRequirements: searchResult._data.input_requirements,
+            refundable: offer.refundable ? 'Refundable' : 'Non Refundable',
+            fareRules: offer.cancellation_policy ? [{ fareRuleDetail: offer.cancellation_policy }] : [],
+            supplierId: nexusSupplier?._id,
+            agentCommission: finalCommission,
+            agentMarkup: 0
           };
-        }) : [];
-
-        return {
-          _id: `SF_${sf._id}`,
-          airline: sf.airline,
-          airlineLogo: `https://pics.avs.io/200/200/${getAirlineCode(sf.airline)}.png`,
-          flightNumber: sf.flightNo || 'SF-1107',
-          departureCity: sf.origin,
-          departureAirportCode: sf.origin,
-          arrivalCity: sf.destination,
-          arrivalAirportCode: sf.destination,
-          departureTime: depTime,
-          arrivalTime: formattedArrivalTime,
-          departureTerminal: sf.departureTerminal || (sf.segments?.[0]?.departureTerminal) || '',
-          arrivalTerminal: sf.arrivalTerminal || (sf.segments?.[sf.segments.length - 1]?.arrivalTerminal) || '',
-          durationMinutes: durationMinutes > 0 ? durationMinutes : 135, // Fallback if negative
-          dayChange: calculatedDayChange,
-          price: price, // Show exact base + commission without additional markup
-          adultPrice: sf.adtFare + (finalCommission / (adultCount + childCount + infantCount)),
-          childPrice: sf.chdFare + (finalCommission / (adultCount + childCount + infantCount)),
-          infantPrice: sf.infFare,
-          stops: (sf.segments && sf.segments.length > 1) ? sf.segments.length - 1 : (sf.stops || 0),
-          isConnecting: Boolean(sf.segments && sf.segments.length > 1),
-          segments: mappedSegments,
-          isSeriesFare: true,
-          seriesFareId: sf.sfId,
-          airlinePnr: sf.airlinePnr,
-          availableSeats: sf.availableSeats,
-          baseFare: basePrice,
-          agentCommission: finalCommission,
-          agentMarkup: agentMarkupAmount,
-          commissionPerPassenger: finalCommission / (adultCount + childCount + infantCount),
-          refundable: 'Non Refundable',
-          fareRules: [{ fareRuleDetail: 'Series / Fixed Departure fares are 100% Non-Refundable.' }],
-          checkinBaggage: '15 Kg',
-          cabinBaggage: '7 Kg',
-          supplierId: supplier ? supplier._id : null,
-          supplierObj: supplier // keep temporary object for CUG check
-        };
-      });
-
-      // Filter Series Fares based on active suppliers and CUG mappings for everyone
-      sfMapped = sfMapped.filter((f: any) => {
-        if (f.supplierObj) {
-          return f.supplierObj.isActive && isFlightAllowedByCUG(f.supplierObj, f.airline);
-        }
-        return true;
-      });
-
-      // Cleanup temporary object
-      sfMapped = sfMapped.map((f: any) => {
-        delete f.supplierObj;
-        return f;
-      });
-
-      // Deduplicate Series Fares that share identical flightNo, departureTime, arrivalTime, and price on the same date
-      const seenSfKeys = new Set<string>();
-      sfMapped = sfMapped.filter((f: any) => {
-        const key = `${f.flightNumber}_${f.departureTime}_${f.arrivalTime}_${f.price}`;
-        if (seenSfKeys.has(key)) return false;
-        seenSfKeys.add(key);
-        return true;
-      });
-
-      flights = [...sfMapped, ...flights];
-    } catch (sfErr) {
-      console.error("Error fetching series fares:", sfErr);
-    }
-  }
-
-    // Merge active GAPI Fares matching route
-    let gapiSearchResult: any[] = [];
-    if (!isAirIqOnlyMode()) {
-      try {
-        if (gapiSupplier && gapiSupplier.isActive) {
-          gapiSearchResult = await searchFlightsGapi({ query: queryParams });
-        }
+        });
+        return mapped.filter((f: any) => isFlightAllowedByCUG(nexusSupplier, f.airline));
       } catch (err: any) {
-        console.warn("[GAPI] Live fare search unavailable:", err.message || err);
+        console.error("NexusDMC API Error:", err?.message || err);
+        return [];
       }
-    
-    if (gapiSearchResult && gapiSearchResult.length > 0) {
-      // Map GAPI 2D array response to flights
-      const onwardFlights = gapiSearchResult[0] || [];
-      onwardFlights.forEach((onward: any) => {
-        if (onward) {
-            const leg = onward.segments[0][0]; // First segment leg
-            const lastLeg = onward.segments[0][onward.segments[0].length - 1];
-            
-            const depTime = leg.origin.depTime;
-            const arrTime = lastLeg.destination.arrTime;
-            const durationMinutes = leg.duration || 120; // fallback if missing
-            
-            let basePrice = onward.fare.publishedFare;
-            
-            let finalCommission = 0;
-            if (gapiSupplier && gapiSupplier.commission) {
-              const percComm = (basePrice * gapiSupplier.commission.percentage) / 100;
-              finalCommission = Math.max(percComm, gapiSupplier.commission.fixedAmount);
+    };
+
+    // Sub-Task 2: Series Fares (MongoDB)
+    const fetchSeriesFares = async (): Promise<any[]> => {
+      if (isAirIqOnlyMode()) return [];
+      try {
+        const dateStr = (targetDate instanceof Date && !isNaN(targetDate.getTime()))
+          ? targetDate.toISOString().split('T')[0]
+          : String(targetDate || '').split('T')[0];
+
+        const exactDayStart = new Date(`${dateStr}T00:00:00.000Z`);
+        const startOfDay = new Date(exactDayStart.getTime() - (6 * 3600 * 1000));
+        const endOfDay = new Date(exactDayStart.getTime() + (23 * 3600 * 1000 + 59 * 60 * 1000));
+        const paxCount = adultCount + childCount;
+        const isTestMode = queryParams.isTestFlight === 'true' || queryParams.sandbox === 'true' || queryParams.mode === 'TEST';
+
+        const sfFilter: any = {
+          origin: { $regex: new RegExp(getAirportCodeRegex(originIata), 'i') },
+          destination: { $regex: new RegExp(getAirportCodeRegex(destinationIata), 'i') },
+          status: { $regex: new RegExp('^Active$', 'i') },
+          travelDate: { $gte: startOfDay, $lte: endOfDay },
+          availableSeats: { $gte: paxCount },
+          isTestFlight: isTestMode ? true : { $ne: true }
+        };
+
+        const SeriesFareModel = require('../seriesFare/seriesFare.model').default;
+        const seriesFares = await SeriesFareModel.find(sfFilter).lean();
+        const now = new Date();
+
+        let sfMapped = seriesFares
+          .filter((sf: any) => {
+            if (!sf.departureTime || !sf.arrivalTime || sf.departureTime === 'undefined' || sf.arrivalTime === 'undefined') {
+              return false;
             }
-            const revPolicy = applyAdminRevenuePolicy(basePrice, leg.airline.airlineCode);
-            if (revPolicy.commission > 0) finalCommission = revPolicy.commission;
-            
-            const agentMarkupAmount = applyAgentMarkup(basePrice);
-            
-            const price = Math.round(basePrice + finalCommission + revPolicy.markup + agentMarkupAmount);
-            
-            const airlineCode = (leg.airline?.airlineCode || '6E').trim().toUpperCase();
-            const GAPI_AIRLINE_NAMES: Record<string, string> = {
-              '6E': 'IndiGo',
-              'AI': 'Air India',
-              'IX': 'Air India Express',
-              'SG': 'SpiceJet',
-              'UK': 'Vistara',
-              'QP': 'Akasa Air',
-              'LH': 'Lufthansa',
-              'EK': 'Emirates',
-              'QR': 'Qatar Airways',
-              'EY': 'Etihad Airways',
-              'SQ': 'Singapore Airlines',
-              'BA': 'British Airways',
-              'FZ': 'flydubai',
-              'G8': 'Go First'
+            const dStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '';
+            if (!dStr) return false;
+            const depDateObj = new Date(`${dStr}T${sf.departureTime}:00`);
+            if (isNaN(depDateObj.getTime())) return false;
+
+            if (!isTestMode) {
+              const cutoffHours = Number(sf.closeBeforeDepartureHours) >= 0 ? Number(sf.closeBeforeDepartureHours) : 2;
+              const cutoffDays = Number(sf.closeBeforeDepartureDays) || 0;
+              const totalCutoffMs = (cutoffDays * 24 + cutoffHours) * 60 * 60 * 1000;
+              const closeCutoffTime = new Date(depDateObj.getTime() - totalCutoffMs);
+              if (now >= closeCutoffTime || now >= depDateObj) return false;
+            }
+            return true;
+          })
+          .map((sf: any) => {
+            const dStr = sf.travelDate ? sf.travelDate.toISOString().split('T')[0] : '2026-08-22';
+            const depTime = `${dStr}T${sf.departureTime}:00`;
+            const arrTime = `${dStr}T${sf.arrivalTime}:00`;
+            let depDateObj = new Date(depTime);
+            let arrDateObj = new Date(arrTime);
+            let calculatedDayChange = sf.dayChange || 0;
+            if (arrDateObj < depDateObj) {
+              arrDateObj.setDate(arrDateObj.getDate() + 1);
+              calculatedDayChange = 1;
+            }
+            const durationMinutes = Math.round((arrDateObj.getTime() - depDateObj.getTime()) / 60000);
+
+            const adtFare = Number(sf.adtFare ?? sf.amount) || 0;
+            const chdFare = Number(sf.chdFare) || 0;
+            const infFare = Number(sf.infFare) || 0;
+            const basePrice = Math.round((adtFare * adultCount) + (chdFare * childCount) + (infFare * infantCount));
+
+            let uploaderCommission = (sf.agentCommission || 0) * (adultCount + childCount);
+            let adminCommission = 0;
+            let adminMarkupAmount = 0;
+
+            const supplier = allSuppliers.find((s: any) =>
+              s.name && sf.supplierName && s.name.toLowerCase() === sf.supplierName.toLowerCase()
+            );
+
+            const isSelfConsumption = isAgent && agentId && sf.supplierId && agentId.toString() === sf.supplierId.toString();
+            if (isSelfConsumption) {
+              uploaderCommission = 0;
+              adminCommission = 0;
+            } else {
+              if (supplier && supplier.commission) {
+                const percComm = (basePrice * supplier.commission.percentage) / 100;
+                adminCommission = Math.max(percComm, supplier.commission.fixedAmount);
+              }
+              const revPolicy = applyAdminRevenuePolicy(basePrice, sf.airline);
+              if (revPolicy.commission > 0) adminCommission = revPolicy.commission;
+              adminMarkupAmount = revPolicy.markup;
+            }
+
+            const price = basePrice + uploaderCommission + adminCommission + adminMarkupAmount;
+            const finalCommission = uploaderCommission + adminCommission;
+
+            let arrivalDateStr = dStr;
+            if (arrDateObj < depDateObj) {
+              const nextDay = new Date(dStr);
+              nextDay.setDate(nextDay.getDate() + 1);
+              arrivalDateStr = nextDay.toISOString().split('T')[0];
+            }
+            const formattedArrivalTime = `${arrivalDateStr}T${sf.arrivalTime}:00`;
+
+            const mappedSegments = (sf.segments && sf.segments.length > 0) ? sf.segments.map((s: any) => {
+              const sDepTime = s.departureTime && !s.departureTime.includes('T') ? `${dStr}T${s.departureTime}:00` : (s.departureTime || depTime);
+              let sArrDateStr = dStr;
+              if (s.departureTime && s.arrivalTime && s.arrivalTime < s.departureTime) {
+                const nextD = new Date(dStr);
+                nextD.setDate(nextD.getDate() + 1);
+                sArrDateStr = nextD.toISOString().split('T')[0];
+              }
+              const sArrTime = s.arrivalTime && !s.arrivalTime.includes('T') ? `${sArrDateStr}T${s.arrivalTime}:00` : (s.arrivalTime || formattedArrivalTime);
+              return {
+                airline: s.airline || sf.airline,
+                flightNo: s.flightNo || sf.flightNo,
+                origin: s.origin,
+                destination: s.destination,
+                departureTime: sDepTime,
+                arrivalTime: sArrTime,
+                departureTerminal: s.departureTerminal || '',
+                arrivalTerminal: s.arrivalTerminal || ''
+              };
+            }) : [];
+
+            return {
+              _id: `SF_${sf._id}`,
+              airline: sf.airline,
+              airlineLogo: `https://pics.avs.io/200/200/${getAirlineCode(sf.airline)}.png`,
+              flightNumber: sf.flightNo || 'SF-1107',
+              departureCity: sf.origin,
+              departureAirportCode: sf.origin,
+              arrivalCity: sf.destination,
+              arrivalAirportCode: sf.destination,
+              departureTime: depTime,
+              arrivalTime: formattedArrivalTime,
+              departureTerminal: sf.departureTerminal || (sf.segments?.[0]?.departureTerminal) || '',
+              arrivalTerminal: sf.arrivalTerminal || (sf.segments?.[sf.segments.length - 1]?.arrivalTerminal) || '',
+              durationMinutes: durationMinutes > 0 ? durationMinutes : 135,
+              dayChange: calculatedDayChange,
+              price: price,
+              adultPrice: sf.adtFare + (finalCommission / (adultCount + childCount + infantCount)),
+              childPrice: sf.chdFare + (finalCommission / (adultCount + childCount + infantCount)),
+              infantPrice: sf.infFare,
+              stops: (sf.segments && sf.segments.length > 1) ? sf.segments.length - 1 : (sf.stops || 0),
+              isConnecting: Boolean(sf.segments && sf.segments.length > 1),
+              segments: mappedSegments,
+              isSeriesFare: true,
+              seriesFareId: sf.sfId,
+              airlinePnr: sf.airlinePnr,
+              availableSeats: sf.availableSeats,
+              baseFare: basePrice,
+              agentCommission: finalCommission,
+              agentMarkup: 0,
+              commissionPerPassenger: finalCommission / (adultCount + childCount + infantCount),
+              refundable: 'Non Refundable',
+              fareRules: [{ fareRuleDetail: 'Series / Fixed Departure fares are 100% Non-Refundable.' }],
+              checkinBaggage: '15 Kg',
+              cabinBaggage: '7 Kg',
+              supplierId: supplier ? supplier._id : null,
+              _supplierObj: supplier
             };
-            const airlineFullName = GAPI_AIRLINE_NAMES[airlineCode] || leg.airline?.airlineName || airlineCode;
-            const flightNumberStr = `${airlineCode}-${leg.airline?.flightNumber || ''}`;
+          });
 
-            // Parse GAPI fareBreakdown for exact per-passenger prices (Adult, Child, Infant)
-            const adultBreakdown = onward.fareBreakdown?.find((fb: any) => fb.passengerType === 1);
-            const childBreakdown = onward.fareBreakdown?.find((fb: any) => fb.passengerType === 2);
-            const infantBreakdown = onward.fareBreakdown?.find((fb: any) => fb.passengerType === 3);
+        sfMapped = sfMapped.filter((f: any) => {
+          if (f._supplierObj) {
+            return f._supplierObj.isActive && isFlightAllowedByCUG(f._supplierObj, f.airline);
+          }
+          return true;
+        }).map((f: any) => {
+          delete f._supplierObj;
+          return f;
+        });
 
-            const totalPax = (adultCount || 1) + (childCount || 0) + (infantCount || 0);
-            const markupPerPax = (finalCommission + revPolicy.markup + agentMarkupAmount) / (totalPax || 1);
+        // Deduplicate identical flights
+        const seenSfKeys = new Set<string>();
+        return sfMapped.filter((f: any) => {
+          const key = `${f.flightNumber}_${f.departureTime}_${f.arrivalTime}_${f.price}`;
+          if (seenSfKeys.has(key)) return false;
+          seenSfKeys.add(key);
+          return true;
+        });
+      } catch (sfErr) {
+        console.error("Error fetching series fares:", sfErr);
+        return [];
+      }
+    };
 
-            let adtFare = adultBreakdown 
-              ? (adultBreakdown.totalFare ?? adultBreakdown.offeredFare ?? adultBreakdown.publishedFare ?? adultBreakdown.baseFare)
-              : (onward.fare.publishedFare / (adultCount || 1));
+    // Sub-Task 3: GAPI Infotech
+    const fetchGapi = async (): Promise<any[]> => {
+      if (isAirIqOnlyMode() || !gapiSupplier || !gapiSupplier.isActive) return [];
+      try {
+        const gapiSearchResult = await searchFlightsGapi({ query: queryParams });
+        if (!gapiSearchResult || !gapiSearchResult.length) return [];
+        const onwardFlights = gapiSearchResult[0] || [];
+        const gapiList: any[] = [];
 
-            let chdFare = childBreakdown
-              ? (childBreakdown.totalFare ?? childBreakdown.offeredFare ?? childBreakdown.publishedFare ?? childBreakdown.baseFare)
-              : (childCount > 0 ? adtFare : 0);
+        onwardFlights.forEach((onward: any) => {
+          if (!onward) return;
+          const leg = onward.segments[0][0];
+          const lastLeg = onward.segments[0][onward.segments[0].length - 1];
+          const depTime = leg.origin.depTime;
+          const arrTime = lastLeg.destination.arrTime;
+          const durationMinutes = leg.duration || 120;
+          let basePrice = onward.fare.publishedFare;
 
-            let infFare = infantBreakdown
-              ? (infantBreakdown.totalFare ?? infantBreakdown.offeredFare ?? infantBreakdown.publishedFare ?? infantBreakdown.tax ?? 0)
-              : 0;
+          let finalCommission = 0;
+          if (gapiSupplier && gapiSupplier.commission) {
+            const percComm = (basePrice * gapiSupplier.commission.percentage) / 100;
+            finalCommission = Math.max(percComm, gapiSupplier.commission.fixedAmount);
+          }
+          const revPolicy = applyAdminRevenuePolicy(basePrice, leg.airline.airlineCode);
+          if (revPolicy.commission > 0) finalCommission = revPolicy.commission;
 
-            const adultPrice = Math.round(adtFare + markupPerPax);
-            const childPrice = childCount > 0 ? Math.round(chdFare + markupPerPax) : 0;
-            const infantPrice = infantCount > 0 ? Math.round(infFare) : 0;
+          const price = Math.round(basePrice + finalCommission + revPolicy.markup);
+          const airlineCode = (leg.airline?.airlineCode || '6E').trim().toUpperCase();
+          const GAPI_AIRLINE_NAMES: Record<string, string> = {
+            '6E': 'IndiGo', 'AI': 'Air India', 'IX': 'Air India Express', 'SG': 'SpiceJet',
+            'UK': 'Vistara', 'QP': 'Akasa Air', 'LH': 'Lufthansa', 'EK': 'Emirates',
+            'QR': 'Qatar Airways', 'EY': 'Etihad Airways', 'SQ': 'Singapore Airlines',
+            'BA': 'British Airways', 'FZ': 'flydubai', 'G8': 'Go First'
+          };
+          const airlineFullName = GAPI_AIRLINE_NAMES[airlineCode] || leg.airline?.airlineName || airlineCode;
+          const flightNumberStr = `${airlineCode}-${leg.airline?.flightNumber || ''}`;
 
-            // Map outbound segments
-            const outboundSegments = (onward.segments[0] || []).map((s: any) => ({
-              airline: s.airline?.airlineName || airlineFullName,
-              flightNo: `${(s.airline?.airlineCode || airlineCode).trim()}-${(s.airline?.flightNumber || leg.airline?.flightNumber || '').trim()}`,
-              origin: s.origin?.airport?.airportCode || s.origin?.airportCode || leg.origin.airport.airportCode,
-              destination: s.destination?.airport?.airportCode || s.destination?.airportCode || lastLeg.destination.airport.airportCode,
-              departureTime: s.origin?.depTime || depTime,
-              arrivalTime: s.destination?.arrTime || arrTime,
-              duration: s.duration || durationMinutes,
+          const adultBreakdown = onward.fareBreakdown?.find((fb: any) => fb.passengerType === 1);
+          const childBreakdown = onward.fareBreakdown?.find((fb: any) => fb.passengerType === 2);
+          const infantBreakdown = onward.fareBreakdown?.find((fb: any) => fb.passengerType === 3);
+
+          const totalPax = (adultCount || 1) + (childCount || 0) + (infantCount || 0);
+          const markupPerPax = (finalCommission + revPolicy.markup) / (totalPax || 1);
+
+          let adtFare = adultBreakdown 
+            ? (adultBreakdown.totalFare ?? adultBreakdown.offeredFare ?? adultBreakdown.publishedFare ?? adultBreakdown.baseFare)
+            : (onward.fare.publishedFare / (adultCount || 1));
+          let chdFare = childBreakdown
+            ? (childBreakdown.totalFare ?? childBreakdown.offeredFare ?? childBreakdown.publishedFare ?? childBreakdown.baseFare)
+            : (childCount > 0 ? adtFare : 0);
+          let infFare = infantBreakdown
+            ? (infantBreakdown.totalFare ?? infantBreakdown.offeredFare ?? infantBreakdown.publishedFare ?? infantBreakdown.tax ?? 0)
+            : 0;
+
+          const adultPrice = Math.round(adtFare + markupPerPax);
+          const childPrice = childCount > 0 ? Math.round(chdFare + markupPerPax) : 0;
+          const infantPrice = infantCount > 0 ? Math.round(infFare) : 0;
+
+          const outboundSegments = (onward.segments[0] || []).map((s: any) => ({
+            airline: s.airline?.airlineName || airlineFullName,
+            flightNo: `${(s.airline?.airlineCode || airlineCode).trim()}-${(s.airline?.flightNumber || leg.airline?.flightNumber || '').trim()}`,
+            origin: s.origin?.airport?.airportCode || s.origin?.airportCode || leg.origin.airport.airportCode,
+            destination: s.destination?.airport?.airportCode || s.destination?.airportCode || lastLeg.destination.airport.airportCode,
+            departureTime: s.origin?.depTime || depTime,
+            arrivalTime: s.destination?.arrTime || arrTime,
+            duration: s.duration || durationMinutes,
+            departureTerminal: s.origin?.airport?.terminal || '1',
+            arrivalTerminal: s.destination?.airport?.terminal || '1'
+          }));
+
+          let returnFlightObj: any = null;
+          if (onward.segments && onward.segments.length > 1 && onward.segments[1]?.length > 0) {
+            const retLegs = onward.segments[1];
+            const retFirstLeg = retLegs[0];
+            const retLastLeg = retLegs[retLegs.length - 1];
+            const retAirlineCode = (retFirstLeg.airline?.airlineCode || airlineCode).trim().toUpperCase();
+            const retAirlineFullName = GAPI_AIRLINE_NAMES[retAirlineCode] || retFirstLeg.airline?.airlineName || retAirlineCode;
+            const retFlightNumberStr = `${retAirlineCode}-${retFirstLeg.airline?.flightNumber || ''}`;
+            const retDepTime = retFirstLeg.origin?.depTime;
+            const retArrTime = retLastLeg.destination?.arrTime;
+            const retDurationMinutes = retLegs.reduce((acc: number, l: any) => acc + (l.duration || 0), 0) || 120;
+
+            const returnSegments = retLegs.map((s: any) => ({
+              airline: s.airline?.airlineName || retAirlineFullName,
+              flightNo: `${(s.airline?.airlineCode || retAirlineCode).trim()}-${(s.airline?.flightNumber || retFirstLeg.airline?.flightNumber || '').trim()}`,
+              origin: s.origin?.airport?.airportCode || s.origin?.airportCode || retFirstLeg.origin?.airport?.airportCode,
+              destination: s.destination?.airport?.airportCode || s.destination?.airportCode || retLastLeg.destination?.airport?.airportCode,
+              departureTime: s.origin?.depTime || retDepTime,
+              arrivalTime: s.destination?.arrTime || retArrTime,
+              duration: s.duration || retDurationMinutes,
               departureTerminal: s.origin?.airport?.terminal || '1',
               arrivalTerminal: s.destination?.airport?.terminal || '1'
             }));
 
-            // Map return segments if this is a round-trip combo
-            let returnFlightObj: any = null;
-            if (onward.segments && onward.segments.length > 1 && onward.segments[1]?.length > 0) {
-              const retLegs = onward.segments[1];
-              const retFirstLeg = retLegs[0];
-              const retLastLeg = retLegs[retLegs.length - 1];
-              const retAirlineCode = (retFirstLeg.airline?.airlineCode || airlineCode).trim().toUpperCase();
-              const retAirlineFullName = GAPI_AIRLINE_NAMES[retAirlineCode] || retFirstLeg.airline?.airlineName || retAirlineCode;
-              const retFlightNumberStr = `${retAirlineCode}-${retFirstLeg.airline?.flightNumber || ''}`;
-              const retDepTime = retFirstLeg.origin?.depTime;
-              const retArrTime = retLastLeg.destination?.arrTime;
-              const retDurationMinutes = retLegs.reduce((acc: number, l: any) => acc + (l.duration || 0), 0) || 120;
-
-              const returnSegments = retLegs.map((s: any) => ({
-                airline: s.airline?.airlineName || retAirlineFullName,
-                flightNo: `${(s.airline?.airlineCode || retAirlineCode).trim()}-${(s.airline?.flightNumber || retFirstLeg.airline?.flightNumber || '').trim()}`,
-                origin: s.origin?.airport?.airportCode || s.origin?.airportCode || retFirstLeg.origin?.airport?.airportCode,
-                destination: s.destination?.airport?.airportCode || s.destination?.airportCode || retLastLeg.destination?.airport?.airportCode,
-                departureTime: s.origin?.depTime || retDepTime,
-                arrivalTime: s.destination?.arrTime || retArrTime,
-                duration: s.duration || retDurationMinutes,
-                departureTerminal: s.origin?.airport?.terminal || '1',
-                arrivalTerminal: s.destination?.airport?.terminal || '1'
-              }));
-
-              returnFlightObj = {
-                _id: `GAPI_RET_${onward.resultSessionId}`,
-                airline: retAirlineFullName,
-                airlineCode: retAirlineCode,
-                airlineLogo: `https://pics.avs.io/200/200/${retAirlineCode}.png`,
-                flightNumber: retFlightNumberStr,
-                flightNo: retFlightNumberStr,
-                segments: returnSegments,
-                departureCity: retFirstLeg.origin?.airport?.cityCode || retFirstLeg.origin?.airportCode,
-                departureAirportCode: retFirstLeg.origin?.airport?.airportCode || retFirstLeg.origin?.airportCode,
-                arrivalCity: retLastLeg.destination?.airport?.cityCode || retLastLeg.destination?.airportCode,
-                arrivalAirportCode: retLastLeg.destination?.airport?.airportCode || retLastLeg.destination?.airportCode,
-                departureTime: retDepTime,
-                arrivalTime: retArrTime,
-                durationMinutes: retDurationMinutes,
-                price: 0, // Included in round-trip combo fare
-                adultPrice: 0,
-                childPrice: 0,
-                infantPrice: 0,
-                stops: retLegs.length - 1,
-                isGapiFare: true,
-                isRoundTripComboReturn: true,
-                resultSessionId: onward.resultSessionId,
-                fareIdentifire: onward.fare.fareIdentifire,
-                availableSeats: retFirstLeg.noOfSeatAvailable || 9,
-                baseFare: 0,
-                agentCommission: 0,
-                agentMarkup: 0,
-                refundable: onward.refundable || 'Non Refundable',
-                fareRules: onward.fareRules || (onward.refundable ? [{ fareRuleDetail: onward.refundable }] : []),
-                checkinBaggage: retFirstLeg.baggage || '15 Kg',
-                cabinBaggage: retFirstLeg.cabinBaggage || '7 Kg',
-                supplierId: gapiSupplier?._id
-              };
-            }
-
-            const allSegments = returnFlightObj 
-              ? [...outboundSegments, ...(returnFlightObj.segments || [])] 
-              : outboundSegments;
-
-            flights.push({
-              _id: `GAPI_${onward.resultSessionId}`, // Save sessionId for fareQuote
-              airline: airlineFullName,
-              airlineCode: airlineCode,
-              airlineLogo: `https://pics.avs.io/200/200/${airlineCode}.png`,
-              flightNumber: flightNumberStr,
-              flightNo: flightNumberStr,
-              segments: outboundSegments,
-              allSegments: allSegments,
-              returnFlight: returnFlightObj,
-              isRoundTripCombo: Boolean(returnFlightObj),
-              departureCity: leg.origin.airport.cityCode,
-              departureAirportCode: leg.origin.airport.airportCode,
-              arrivalCity: lastLeg.destination.airport.cityCode,
-              arrivalAirportCode: lastLeg.destination.airport.airportCode,
-              departureTime: depTime,
-              arrivalTime: arrTime,
-              durationMinutes: durationMinutes,
-              price: price,
-              adultPrice: adultPrice,
-              childPrice: childPrice,
-              infantPrice: infantPrice,
-              stops: onward.segments[0].length - 1,
+            returnFlightObj = {
+              _id: `GAPI_RET_${onward.resultSessionId}`,
+              airline: retAirlineFullName,
+              airlineCode: retAirlineCode,
+              airlineLogo: `https://pics.avs.io/200/200/${retAirlineCode}.png`,
+              flightNumber: retFlightNumberStr,
+              flightNo: retFlightNumberStr,
+              segments: returnSegments,
+              departureCity: retFirstLeg.origin?.airport?.cityCode || retFirstLeg.origin?.airportCode,
+              departureAirportCode: retFirstLeg.origin?.airport?.airportCode || retFirstLeg.origin?.airportCode,
+              arrivalCity: retLastLeg.destination?.airport?.cityCode || retLastLeg.destination?.airportCode,
+              arrivalAirportCode: retLastLeg.destination?.airport?.airportCode || retLastLeg.destination?.airportCode,
+              departureTime: retDepTime,
+              arrivalTime: retArrTime,
+              durationMinutes: retDurationMinutes,
+              price: 0,
+              adultPrice: 0,
+              childPrice: 0,
+              infantPrice: 0,
+              stops: retLegs.length - 1,
               isGapiFare: true,
+              isRoundTripComboReturn: true,
               resultSessionId: onward.resultSessionId,
               fareIdentifire: onward.fare.fareIdentifire,
-              availableSeats: leg.noOfSeatAvailable || 9,
-              baseFare: basePrice,
-              agentCommission: finalCommission,
-              agentMarkup: agentMarkupAmount,
+              availableSeats: retFirstLeg.noOfSeatAvailable || 9,
+              baseFare: 0,
+              agentCommission: 0,
+              agentMarkup: 0,
               refundable: onward.refundable || 'Non Refundable',
               fareRules: onward.fareRules || (onward.refundable ? [{ fareRuleDetail: onward.refundable }] : []),
-              checkinBaggage: leg.baggage || '15 Kg',
-              cabinBaggage: leg.cabinBaggage || '7 Kg',
-              supplierId: gapiSupplier?._id,
-              supplierObj: gapiSupplier
-            });
-        }
-      });
-      // Filter GAPI flights based on CUG mappings
-      flights = flights.filter(f => !f.isGapiFare || isFlightAllowedByCUG(f.supplierObj, f.airline));
-      
-      // Cleanup temporary object
-      flights = flights.map((f: any) => {
-        if (f.supplierObj) delete f.supplierObj;
-        return f;
-      });
-    }
-  }
+              checkinBaggage: retFirstLeg.baggage || '15 Kg',
+              cabinBaggage: retFirstLeg.cabinBaggage || '7 Kg',
+              supplierId: gapiSupplier?._id
+            };
+          }
 
-    // Merge active AirIQ Fares matching route
-    const shouldSearchAirIq = airIqSupplier && (isAirIqOnlyMode() || (airIqSupplier.isActive && (airIqSupplier.searchEnabled !== false)));
-    if (shouldSearchAirIq) {
+          const allSegments = returnFlightObj ? [...outboundSegments, ...(returnFlightObj.segments || [])] : outboundSegments;
+
+          gapiList.push({
+            _id: `GAPI_${onward.resultSessionId}`,
+            airline: airlineFullName,
+            airlineCode: airlineCode,
+            airlineLogo: `https://pics.avs.io/200/200/${airlineCode}.png`,
+            flightNumber: flightNumberStr,
+            flightNo: flightNumberStr,
+            segments: outboundSegments,
+            allSegments: allSegments,
+            returnFlight: returnFlightObj,
+            isRoundTripCombo: Boolean(returnFlightObj),
+            departureCity: leg.origin.airport.cityCode,
+            departureAirportCode: leg.origin.airport.airportCode,
+            arrivalCity: lastLeg.destination.airport.cityCode,
+            arrivalAirportCode: lastLeg.destination.airport.airportCode,
+            departureTime: depTime,
+            arrivalTime: arrTime,
+            durationMinutes: durationMinutes,
+            price: price,
+            adultPrice: adultPrice,
+            childPrice: childPrice,
+            infantPrice: infantPrice,
+            stops: onward.segments[0].length - 1,
+            isGapiFare: true,
+            resultSessionId: onward.resultSessionId,
+            fareIdentifire: onward.fare.fareIdentifire,
+            availableSeats: leg.noOfSeatAvailable || 9,
+            baseFare: basePrice,
+            agentCommission: finalCommission,
+            agentMarkup: 0,
+            refundable: onward.refundable || 'Non Refundable',
+            fareRules: onward.fareRules || (onward.refundable ? [{ fareRuleDetail: onward.refundable }] : []),
+            checkinBaggage: leg.baggage || '15 Kg',
+            cabinBaggage: leg.cabinBaggage || '7 Kg',
+            supplierId: gapiSupplier?._id
+          });
+        });
+
+        return gapiList.filter((f: any) => isFlightAllowedByCUG(gapiSupplier, f.airline));
+      } catch (err: any) {
+        console.warn("[GAPI] Live fare search unavailable:", err.message || err);
+        return [];
+      }
+    };
+
+    // Sub-Task 4: AirIQ
+    const fetchAirIq = async (): Promise<any[]> => {
+      const shouldSearch = airIqSupplier && (isAirIqOnlyMode() || (airIqSupplier.isActive && airIqSupplier.searchEnabled !== false));
+      if (!shouldSearch) return [];
       try {
         const yyyy = targetDate.getFullYear();
         const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
@@ -900,7 +784,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         });
 
         if (airIqResult && (airIqResult.status === 'success' || airIqResult.code === '200') && Array.isArray(airIqResult.data)) {
-          let airIqFlights = airIqResult.data.map((flight: any) => {
+          const mapped = airIqResult.data.map((flight: any) => {
             const flightNoParts = (flight.flight_number || '').trim().split(' ');
             const airlineCode = flightNoParts[0]?.toUpperCase() || 'SG';
 
@@ -917,21 +801,16 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
 
             const basePrice = Math.round(Number(flight.price || 0) * (adultCount + childCount));
 
-            // Commission & Markup
             let finalCommission = 0;
             if (airIqSupplier && airIqSupplier.commission) {
               const percComm = (basePrice * (airIqSupplier.commission.percentage || 0)) / 100;
               finalCommission = Math.max(percComm, airIqSupplier.commission.fixedAmount || 0);
             }
-
             const revPolicy = applyAdminRevenuePolicy(basePrice, airlineCode);
-            if (revPolicy.commission > 0) {
-              finalCommission = revPolicy.commission;
-            }
+            if (revPolicy.commission > 0) finalCommission = revPolicy.commission;
 
-            const agentMarkup = applyAgentMarkup(basePrice);
-            const totalPrice = Math.round(basePrice + finalCommission + revPolicy.markup + agentMarkup);
-            const perPaxMarkup = (finalCommission + revPolicy.markup + agentMarkup) / Math.max(1, (adultCount + childCount));
+            const totalPrice = Math.round(basePrice + finalCommission + revPolicy.markup);
+            const perPaxMarkup = (finalCommission + revPolicy.markup) / Math.max(1, (adultCount + childCount));
 
             const adultTotal = Math.round(Number(flight.price || 0) + perPaxMarkup);
             const baseFarePerPax = Math.round(adultTotal * 0.72);
@@ -985,9 +864,10 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
               refundable: 'Non Refundable',
               isAirIqFare: true,
               airIq_ticket_id: flight.ticket_id,
-              airIq_raw: flight,
+              // Stripped airIq_raw to free heap memory on 2GB VPS
               supplierId: airIqSupplier?._id,
-              supplierObj: airIqSupplier,
+              agentCommission: finalCommission,
+              agentMarkup: 0,
               fareRules: [
                 {
                   ruleType: 'CANCELLATION',
@@ -1009,30 +889,23 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
             };
           });
 
-          // Filter AirIQ flights based on CUG mappings (skip in AirIQ-only mode for direct testing)
           if (!isAirIqOnlyMode()) {
-            airIqFlights = airIqFlights.filter((f: any) => 
-              isFlightAllowedByCUG(f.supplierObj, f.airline) || isFlightAllowedByCUG(f.supplierObj, f.airlineCode)
+            return mapped.filter((f: any) =>
+              isFlightAllowedByCUG(airIqSupplier, f.airline) || isFlightAllowedByCUG(airIqSupplier, f.airlineCode)
             );
           }
-
-          // Cleanup temporary object
-          airIqFlights = airIqFlights.map((f: any) => {
-            if (f.supplierObj) delete f.supplierObj;
-            return f;
-          });
-
-          flights = [...flights, ...airIqFlights];
-        } else if (airIqResult?.message) {
-          console.log(`[AirIQ Search] Sector ${originIata}->${destinationIata} on ${airIqDepDate}: ${airIqResult.message}`);
+          return mapped;
         }
+        return [];
       } catch (airIqErr: any) {
         console.warn('[AirIQ] Live fare search unavailable:', airIqErr.response?.data?.message || airIqErr.message || airIqErr);
+        return [];
       }
-    }
+    };
 
-    // Merge standard Inventory Flights matching route
-    if (!isAirIqOnlyMode()) {
+    // Sub-Task 5: Standard DB Inventory Flights
+    const fetchDbFlights = async (): Promise<any[]> => {
+      if (isAirIqOnlyMode()) return [];
       try {
         const exactDayStart = new Date(targetDate);
         exactDayStart.setUTCHours(0, 0, 0, 0);
@@ -1046,20 +919,36 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
         };
 
         const dbFlights = await Flight.find(dbFilter).lean();
-        
-        const dbMapped = dbFlights.map((f: any) => ({
+        return dbFlights.map((f: any) => ({
           ...f,
-          price: f.price * (adultCount + childCount) + (infantCount > 0 ? (f.price * 0.2 * infantCount) : 0), // Simple pax calculation
-          isInventoryFare: true
+          price: f.price * (adultCount + childCount) + (infantCount > 0 ? (f.price * 0.2 * infantCount) : 0),
+          isInventoryFare: true,
+          agentCommission: 0,
+          agentMarkup: 0
         }));
-
-        flights = [...dbMapped, ...flights];
       } catch (dbErr) {
         console.error("Error fetching standard db flights:", dbErr);
+        return [];
+      }
+    };
+
+    // Run all 5 supplier queries concurrently with Promise.allSettled
+    const supplierResults = await Promise.allSettled([
+      fetchNexus(),
+      fetchSeriesFares(),
+      fetchGapi(),
+      fetchAirIq(),
+      fetchDbFlights()
+    ]);
+
+    let flights: any[] = [];
+    for (const res of supplierResults) {
+      if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+        flights.push(...res.value);
       }
     }
 
-    // Apply filters
+    // Apply user filters
     if (stops !== undefined && stops !== '') {
       flights = flights.filter((f: any) => f.stops === Number(stops));
     }
@@ -1219,26 +1108,48 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
     console.log("✈️ Flight Search Request Received:", req.query);
 
     // Get Admin config for caching timeout
-    const admin = await User.findOne({ role: 'SUPER_ADMIN' }).lean();
+    const admin = await User.findOne({ role: 'SUPER_ADMIN' }).select('resultExpiryTime').lean();
     const expiryMins = admin?.resultExpiryTime || 20; // Default 20 mins
 
-    // Create unique cache key based on query params, user context, and supplier mode
-    const cacheKey = JSON.stringify({ ...req.query, isAgent, agentId, airIqOnly: isAirIqOnlyMode() });
+    const originIata = getIataCode((req.query.from as string) || '');
+    const destinationIata = getIataCode((req.query.to as string) || '');
+    const adultCount = Number(req.query.adults) || Number(req.query.passengers) || 1;
+    const childCount = Number(req.query.children) || 0;
+    const infantCount = Number(req.query.infants) || 0;
+    const cabin = (req.query.cabinClass as string) || 'ALL';
+    const travelDate = (req.query.date as string) || '';
+    const airIqMode = isAirIqOnlyMode() ? 'AIRIQ' : 'ALL';
+    const isTestMode = req.query.isTestFlight === 'true' || req.query.sandbox === 'true' || req.query.mode === 'TEST' ? 'TEST' : 'LIVE';
+
+    // Shared wholesale cache key without agentId so all agents reuse identical supplier inventory
+    const cacheKey = `FLIGHT_${originIata}_${destinationIata}_${travelDate}_${adultCount}_${childCount}_${infantCount}_${cabin}_${airIqMode}_${isTestMode}`;
     const cachedResult = flightSearchCache.get(cacheKey);
 
     if (cachedResult && (Date.now() - cachedResult.timestamp < expiryMins * 60 * 1000)) {
-      console.log(`[CACHE HIT] Returning cached flights. Expiry is set to ${expiryMins} mins.`);
+      console.log(`[CACHE HIT] Returning cached flights for ${cacheKey}. Expiry is set to ${expiryMins} mins.`);
       return res.json(cachedResult.data);
     }
 
-    console.log(`[CACHE MISS] Fetching fresh flights...`);
-    const flights = await getFlightsData(req.query, isAgent, agentId);
-    
-    // Save to cache only when flights are found so empty results are never stuck
-    if (flights && flights.length > 0) {
-      flightSearchCache.set(cacheKey, { data: flights, timestamp: Date.now() });
+    // Request Coalescing (In-flight promise deduplication for concurrent identical searches)
+    let searchPromise = inFlightSearches.get(cacheKey);
+    if (!searchPromise) {
+      console.log(`[CACHE MISS] Fetching fresh flights for ${cacheKey}...`);
+      searchPromise = getFlightsData(req.query, isAgent, agentId)
+        .then((flights) => {
+          if (flights && flights.length > 0) {
+            flightSearchCache.set(cacheKey, { data: flights, timestamp: Date.now() });
+          }
+          return flights;
+        })
+        .finally(() => {
+          inFlightSearches.delete(cacheKey);
+        });
+      inFlightSearches.set(cacheKey, searchPromise);
+    } else {
+      console.log(`[COALESCED] Attaching to in-flight search promise for ${cacheKey}`);
     }
 
+    const flights = await searchPromise;
     res.json(flights);
   } catch (error: any) {
     console.error("Flight Search Catch Error:", error);
@@ -1248,6 +1159,7 @@ export const searchFlights = async (req: AuthRequest, res: Response) => {
 
 export const clearFlightSearchCache = () => {
   flightSearchCache.clear();
+  inFlightSearches.clear();
 };
 
 // @desc    Check Flight Availability

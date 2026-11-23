@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import puppeteer from 'puppeteer';
+import PDFDocument from 'pdfkit';
 import fs from 'fs';
 dotenv.config();
 
@@ -152,194 +152,126 @@ export const sendWalletTopupEmail = async (to: string, name: string, amount: num
   await sendEmail(to, 'Wallet Top-up Successful', getBaseTemplate('TrippeChalo India', 'Wallet Top-up Success', body), "TrippeChalo India Finance");
 };
 
-const generatePDFTicket = async (booking: any, agentName: string): Promise<Buffer> => {
-  const pnr = booking.details?.pnr || booking.bookingId;
-  const flightNo = booking.details?.airline || 'FL-324';
-  const depTime = booking.date && String(booking.date).includes('T') ? new Date(booking.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '13:00';
-  const arrTime = depTime; // Mock arrival
-  const dateStr = new Date(booking.createdAt || booking.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const issueDateStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
+export const generatePDFTicket = (booking: any, agentName: string): Promise<Buffer> => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 36, size: 'A4' });
+      const buffers: Buffer[] = [];
 
-  const passengersList = booking.details?.passengers && booking.details.passengers.length > 0 
+      doc.on('data', buffers.push.bind(buffers));
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
+      doc.on('error', (err) => reject(err));
+
+      const pnr = booking.details?.pnr || booking.bookingId;
+      const flightNo = booking.details?.flightNo || booking.details?.airline || 'FL-324';
+      const origin = booking.details?.from || 'Origin';
+      const destination = booking.details?.to || 'Destination';
+      const depTime = booking.date && String(booking.date).includes('T') 
+        ? new Date(booking.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+        : (booking.details?.departureTime || '12:00');
+      const arrTime = booking.details?.arrivalTime 
+        ? (String(booking.details.arrivalTime).includes('T') 
+            ? new Date(booking.details.arrivalTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+            : booking.details.arrivalTime)
+        : depTime;
+      const dateStr = new Date(booking.date || booking.createdAt || Date.now()).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const issueDateStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
+
+      // 1. Header Banner
+      doc.rect(36, 36, 523, 60).fill('#0b1031');
+      doc.fillColor('#ffffff').fontSize(18).font('Helvetica-Bold').text('TRIPPECHALO INDIA', 50, 48);
+      doc.fillColor('#94a3b8').fontSize(9).font('Helvetica').text('E-TICKET / RESERVATION VOUCHER', 50, 72);
+      doc.fillColor('#ffffff').fontSize(10).font('Helvetica-Bold').text('GSTIN: 09AAMCT8505A1ZB', 380, 50, { align: 'right', width: 165 });
+      doc.fillColor('#cbd5e1').fontSize(8).font('Helvetica').text('Helpline: +91 95559 34205', 380, 68, { align: 'right', width: 165 });
+
+      // 2. Booking Reference Box
+      const startY = 108;
+      doc.rect(36, startY, 523, 45).fill('#f8fafc').stroke('#cbd5e1');
+      doc.fillColor('#64748b').fontSize(8).font('Helvetica-Bold').text('AIRLINE PNR', 50, startY + 8);
+      doc.fillColor('#0f172a').fontSize(16).font('Helvetica-Bold').text(String(pnr).toUpperCase(), 50, startY + 20);
+
+      doc.fillColor('#64748b').fontSize(8).font('Helvetica-Bold').text('BOOKING ID', 220, startY + 8);
+      doc.fillColor('#0f172a').fontSize(11).font('Helvetica-Bold').text(booking.bookingId, 220, startY + 22);
+
+      doc.fillColor('#64748b').fontSize(8).font('Helvetica-Bold').text('ISSUED ON', 400, startY + 8);
+      doc.fillColor('#0f172a').fontSize(9).font('Helvetica').text(issueDateStr, 400, startY + 22);
+
+      // 3. Flight Details Section
+      const flightY = 165;
+      doc.rect(36, flightY, 523, 20).fill('#e2e8f0');
+      doc.fillColor('#1e293b').fontSize(9).font('Helvetica-Bold').text('FLIGHT ITINERARY', 46, flightY + 5);
+
+      const flightContentY = flightY + 25;
+      doc.rect(36, flightContentY, 523, 65).fill('#ffffff').stroke('#e2e8f0');
+      doc.fillColor('#0b1031').fontSize(12).font('Helvetica-Bold').text(`${flightNo}`, 50, flightContentY + 12);
+      doc.fillColor('#64748b').fontSize(9).font('Helvetica').text('Class: Economy', 50, flightContentY + 28);
+      doc.fillColor('#16a34a').fontSize(9).font('Helvetica-Bold').text('Status: Confirmed', 50, flightContentY + 44);
+
+      doc.fillColor('#0f172a').fontSize(14).font('Helvetica-Bold').text(origin, 180, flightContentY + 12);
+      doc.fillColor('#64748b').fontSize(10).font('Helvetica').text(`${depTime} • ${dateStr}`, 180, flightContentY + 30);
+
+      doc.fillColor('#3b82f6').fontSize(16).font('Helvetica-Bold').text('➔', 320, flightContentY + 16);
+
+      doc.fillColor('#0f172a').fontSize(14).font('Helvetica-Bold').text(destination, 370, flightContentY + 12);
+      doc.fillColor('#64748b').fontSize(10).font('Helvetica').text(`${arrTime} • ${dateStr}`, 370, flightContentY + 30);
+
+      // 4. Passenger Details Table
+      const paxHeaderY = 270;
+      doc.rect(36, paxHeaderY, 523, 20).fill('#e2e8f0');
+      doc.fillColor('#1e293b').fontSize(9).font('Helvetica-Bold').text('PASSENGER DETAILS', 46, paxHeaderY + 5);
+
+      let paxY = paxHeaderY + 25;
+      const passengersList = booking.details?.passengers && booking.details.passengers.length > 0 
         ? booking.details.passengers 
-        : [{ name: agentName, type: 'Adult' }];
+        : [{ name: agentName || 'Primary Passenger', type: 'Adult' }];
 
-  const passengersHTML = passengersList.map((pax: any, i: number) => `
-    <tr>
-      <td class="py-3 px-3 align-top border-r border-gray-200">
-        <p class="mb-1 font-bold">${pnr}</p>
-      </td>
-      <td class="py-3 px-3 align-top border-r border-gray-200">
-        <p class="font-bold text-[12px] uppercase">
-          ${pax.name} <span class="text-[10px] font-normal lowercase ml-1">${pax.type || 'Adult'}</span>
-        </p>
-      </td>
-      <td class="py-3 px-3 align-top border-r border-gray-200 font-bold text-gray-800">
-        Unassigned
-      </td>
-      <td class="py-3 px-3 align-top text-right font-medium capitalize">
-        Confirmed
-      </td>
-    </tr>
-  `).join('');
+      // Table Header
+      doc.rect(36, paxY, 523, 18).fill('#f1f5f9');
+      doc.fillColor('#475569').fontSize(8).font('Helvetica-Bold').text('#', 46, paxY + 5);
+      doc.text('PASSENGER NAME', 80, paxY + 5);
+      doc.text('TYPE', 280, paxY + 5);
+      doc.text('SEAT', 370, paxY + 5);
+      doc.text('STATUS', 470, paxY + 5);
+      paxY += 20;
 
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <script src="https://cdn.tailwindcss.com"></script>
-      <style>
-        body { font-family: sans-serif; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      </style>
-    </head>
-    <body class="bg-white p-8 box-border">
-      <div class="w-full max-w-4xl bg-white text-black box-border mx-auto border-2 border-gray-200 p-6 rounded-md">
-        
-        <!-- Header -->
-        <div class="flex justify-between items-start border-b-2 border-gray-300 pb-4 mb-6">
-          <div>
-            <h2 class="text-3xl font-black text-[#0b1031] tracking-tight flex items-center gap-2 mb-1">
-              <span class="text-blue-600 font-sans">✈</span>
-              <span>Trippe<span class="text-blue-600">Chalo</span> <span class="text-xs bg-orange-500 text-white px-2 py-0.5 rounded font-black tracking-wider align-middle ml-1">INDIA</span></span>
-            </h2>
-            <p class="text-[11px] text-gray-500 font-medium tracking-widest uppercase">E-Ticket / Reservation Voucher</p>
-          </div>
-          <div class="text-right text-[11px] text-gray-700">
-            <p class="font-bold text-gray-900 mb-1 uppercase">TRIPPECHALO INDIA PRIVATE LIMITED</p>
-            <p>First Floor, D 42, Greater Noida Expressway, Sector 108, Noida, Uttar Pradesh - 201304</p>
-            <p class="font-bold mt-1">GSTIN: 09AAMCT8505A1ZB</p>
-            <p>Phone: +91 95559 34205</p>
-          </div>
-        </div>
+      passengersList.forEach((pax: any, i: number) => {
+        const rowBg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+        doc.rect(36, paxY, 523, 22).fill(rowBg).stroke('#e2e8f0');
+        doc.fillColor('#334155').fontSize(9).font('Helvetica').text(String(i + 1), 46, paxY + 6);
+        const pName = (pax.name || `${pax.firstName || ''} ${pax.lastName || ''}` || 'Passenger').toUpperCase();
+        doc.fillColor('#0f172a').fontSize(9).font('Helvetica-Bold').text(pName, 80, paxY + 6);
+        doc.fillColor('#64748b').fontSize(8).font('Helvetica').text(pax.type || 'Adult', 280, paxY + 6);
+        doc.fillColor('#64748b').fontSize(8).font('Helvetica').text(pax.seat || 'Assigned at check-in', 370, paxY + 6);
+        doc.fillColor('#16a34a').fontSize(8).font('Helvetica-Bold').text('CONFIRMED', 470, paxY + 6);
+        paxY += 24;
+      });
 
-        <!-- Booking Info -->
-        <div class="flex justify-between items-start mb-6 text-[12px]">
-          <div>
-            <p>Booking Reference: <span class="font-bold text-xl ml-2 text-gray-900">${pnr}</span></p>
-          </div>
-          <div class="text-right">
-            <p>Agency Booking ID: <span class="font-bold">${booking.bookingId}</span></p>
-            <p>Issued On: <span class="font-bold">${issueDateStr}</span></p>
-          </div>
-        </div>
+      // 5. Payment Summary Box
+      paxY += 15;
+      doc.rect(36, paxY, 523, 45).fill('#f8fafc').stroke('#cbd5e1');
+      doc.fillColor('#0b1031').fontSize(10).font('Helvetica-Bold').text('PAYMENT SUMMARY', 50, paxY + 8);
+      const totalAmt = Number(booking.totalAmount || 0).toLocaleString('en-IN');
+      doc.fillColor('#64748b').fontSize(9).font('Helvetica').text(`Total Fare Paid: ₹ ${totalAmt}`, 50, paxY + 25);
+      doc.fillColor('#16a34a').fontSize(9).font('Helvetica-Bold').text(`Payment Status: SUCCESS (${booking.paymentMethod || 'WALLET'})`, 330, paxY + 25);
 
-        <!-- Content Box -->
-        <div class="border-2 border-gray-300 rounded-sm overflow-hidden mb-8">
-          <!-- Flight Details -->
-          <div>
-            <div class="bg-gray-200 px-3 py-1.5 flex justify-between items-center text-[10px] font-bold">
-              <span class="uppercase">Flight Details</span>
-              <span class="uppercase tracking-wider">ALL TIMINGS MENTIONED ARE IN 24HRS FORMAT AND LOCAL AIRPORT TIMINGS</span>
-            </div>
-            <table class="w-full text-left text-[11px] border-b border-gray-200">
-              <thead class="border-b border-gray-200 bg-white">
-                <tr>
-                  <th class="p-3 font-normal text-gray-500">Flight</th>
-                  <th class="p-3 font-normal text-gray-500">Depart</th>
-                  <th class="p-3 font-normal text-gray-500">Arrive</th>
-                  <th class="p-3 font-normal text-gray-500 border-l border-gray-200">Duration/Stops</th>
-                  <th class="p-3 font-normal text-gray-500 border-l border-gray-200">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td class="p-3 align-top">
-                    <p class="font-bold text-[12px] uppercase">${flightNo}</p>
-                    <p class="font-bold">ECONOMY</p>
-                  </td>
-                  <td class="p-3 align-top">
-                    <p class="font-bold uppercase text-[12px]">${booking.details?.from || 'Origin'}</p>
-                    <p class="font-bold">${depTime} <span class="font-normal text-gray-600">${dateStr}</span></p>
-                  </td>
-                  <td class="p-3 align-top">
-                    <p class="font-bold uppercase text-[12px]">${booking.details?.to || 'Destination'}</p>
-                    <p class="font-bold">${arrTime} <span class="font-normal text-gray-600">${dateStr}</span></p>
-                  </td>
-                  <td class="p-3 align-top border-l border-gray-200 text-blue-600 font-medium">
-                    2h 10m / Non-Stop
-                  </td>
-                  <td class="p-3 align-top border-l border-gray-200 font-medium capitalize">
-                    Confirmed
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+      // 6. Important Guidelines
+      paxY += 60;
+      doc.rect(36, paxY, 523, 70).fill('#fffbeb').stroke('#fef3c7');
+      doc.fillColor('#b45309').fontSize(8).font('Helvetica-Bold').text('IMPORTANT TRAVEL INFORMATION', 50, paxY + 8);
+      doc.fillColor('#78350f').fontSize(7.5).font('Helvetica')
+        .text('• Passengers must present a government-issued photo ID along with this ticket at airport security.', 50, paxY + 22)
+        .text('• Check-in counters close 60 minutes prior to domestic departures and 75 minutes prior to international departures.', 50, paxY + 34)
+        .text('• Standard Baggage: Check-in 15 Kg (1 piece) / Cabin 7 Kg per passenger (subject to airline rules).', 50, paxY + 46)
+        .text('• For flight status, rescheduling, or cancellations, please contact 24x7 Support: +91 95559 34205.', 50, paxY + 58);
 
-          <!-- Passenger Details -->
-          <div class="border-t-2 border-gray-300">
-            <div class="bg-gray-200 px-3 py-1.5 flex flex-wrap justify-between items-center text-[10px] font-bold gap-2">
-              <span class="uppercase">Passenger Details</span>
-            </div>
-            <table class="w-full text-left text-[11px] table-fixed">
-              <thead class="border-b border-gray-200 bg-white">
-                <tr>
-                  <th class="py-2 px-3 font-normal text-gray-500 w-1/4 border-r border-gray-200">PNR</th>
-                  <th class="py-2 px-3 font-normal text-gray-500 w-1/2 border-r border-gray-200">Passenger / Baggage Details</th>
-                  <th class="py-2 px-3 font-normal text-gray-500 w-[12.5%] border-r border-gray-200">Seat</th>
-                  <th class="py-2 px-3 font-normal text-gray-500 w-[12.5%] text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-200 bg-white">
-                ${passengersHTML}
-              </tbody>
-            </table>
-          </div>
-
-        </div>
-
-        <div class="text-[10px] text-gray-500 mt-4 text-center">
-          <p class="font-bold mb-1">IMPORTANT INFORMATION</p>
-          <p>1. This is an E-Ticket. Passengers must carry a valid photo ID and this E-Ticket to enter the airport.</p>
-        </div>
-        
-      </div>
-    </body>
-    </html>
-  `;
-
-  let browser;
-  try {
-    const launchOptions: any = { 
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] 
-    };
-
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    } else if (process.platform === 'win32') {
-      const winChrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-      const winChromeX86 = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
-      if (fs.existsSync(winChrome)) {
-        launchOptions.executablePath = winChrome;
-      } else if (fs.existsSync(winChromeX86)) {
-        launchOptions.executablePath = winChromeX86;
-      }
+      doc.end();
+    } catch (e) {
+      reject(e);
     }
-
-    browser = await puppeteer.launch(launchOptions);
-    const page = await browser.newPage();
-    
-    // Set content and wait for network idle to ensure tailwind loads
-    await page.setContent(htmlContent, { waitUntil: 'load' });
-    await new Promise(r => setTimeout(r, 1500)); // Wait for tailwind CDN
-    
-    
-    const pdfBuffer = await page.pdf({ 
-      format: 'A4', 
-      printBackground: true,
-      margin: { top: '20px', bottom: '20px', left: '0', right: '0' }
-    });
-    
-    return Buffer.from(pdfBuffer);
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-  }
+  });
 };
+
+export const generateBookingInvoicePdf = generatePDFTicket;
 
 export const sendBookingConfirmationEmail = async (to: string, name: string, booking: any) => {
   const pnr = booking.details?.pnr || booking.bookingId;
