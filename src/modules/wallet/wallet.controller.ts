@@ -10,7 +10,7 @@ import { createAdminNotification } from '../notifications/notification.controlle
 import { WithdrawalRequest } from './withdrawalRequest.model';
 import { sendWalletTopupEmail } from '../../utils/email.service';
 
-// @desc    Get user wallet and transactions
+// @desc    Get user wallet and transactions (with date & type filter support)
 // @route   GET /api/wallet
 // @access  Private
 export const getWallet = async (req: AuthRequest, res: Response) => {
@@ -18,7 +18,43 @@ export const getWallet = async (req: AuthRequest, res: Response) => {
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    const transactions = await Transaction.find({ user: req.user._id }).sort({ date: -1 }).limit(10).lean();
+    const { month, year, type } = req.query;
+    const filter: any = { user: req.user._id };
+
+    // Month & Year Filter
+    if (year && month && String(year) !== 'ALL' && String(month) !== 'ALL') {
+      const y = parseInt(year as string, 10);
+      const m = parseInt(month as string, 10) - 1; // 0-indexed month
+      const startDate = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0));
+      const endDate = new Date(Date.UTC(y, m + 1, 1, 0, 0, 0, 0));
+      filter.date = { $gte: startDate, $lt: endDate };
+    } else if (year && String(year) !== 'ALL') {
+      const y = parseInt(year as string, 10);
+      const startDate = new Date(Date.UTC(y, 0, 1, 0, 0, 0, 0));
+      const endDate = new Date(Date.UTC(y + 1, 0, 1, 0, 0, 0, 0));
+      filter.date = { $gte: startDate, $lt: endDate };
+    }
+
+    // Transaction Type Filter (REFUND, CREDIT, DEBIT, FAILED, ALL)
+    if (type && String(type).toUpperCase() !== 'ALL') {
+      const t = String(type).toUpperCase();
+      if (t === 'REFUND') {
+        filter.type = 'CREDIT';
+        filter.description = { $regex: /refund/i };
+      } else if (t === 'FAILED') {
+        filter.$or = [
+          { description: { $regex: /fail/i } },
+          { status: 'FAILED' }
+        ];
+      } else if (t === 'CREDIT') {
+        filter.type = 'CREDIT';
+        filter.description = { $not: { $regex: /refund/i } };
+      } else if (t === 'DEBIT') {
+        filter.type = 'DEBIT';
+      }
+    }
+
+    const transactions = await Transaction.find(filter).sort({ date: -1 }).limit(200).lean();
 
     res.json({
       balance: user.walletBalance,
