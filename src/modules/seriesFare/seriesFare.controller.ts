@@ -25,9 +25,8 @@ const formatAirlineName = (name?: string): string => {
 export const createSeriesFare = async (req: AuthRequest, res: Response) => {
   try {
     const {
-      airline: formatAirlineName(airline),
-      airlinePnr: (airlinePnr || '').toUpperCase(),
-      flightNo: (flightNo || '').toUpperCase(),
+      airline,
+      airlinePnr,
       bookingType,
       origin,
       destination,
@@ -107,11 +106,10 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       sfId,
       airline: formatAirlineName(airline),
       airlinePnr: (airlinePnr || '').toUpperCase(),
-      flightNo: (flightNo || '').toUpperCase(),
       bookingType: bookingType || 'ONE_WAY',
       origin: (origin || '').toUpperCase(),
       destination: (destination || '').toUpperCase(),
-      flightNo,
+      flightNo: (flightNo || '').toUpperCase(),
       departureTime,
       arrivalTime,
       departureTerminal: departureTerminal || '',
