@@ -341,6 +341,24 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       return 'AI';
     };
 
+    const formatAirlineName = (name: string): string => {
+      if (!name) return '';
+      const trimmed = name.trim();
+      const n = trimmed.toLowerCase();
+      if (n.includes('air india express')) return 'Air India Express';
+      if (n.includes('air india') || n === 'ai' || n === 'airindia') return 'Air India';
+      if (n.includes('indigo') || n === '6e') return 'IndiGo';
+      if (n.includes('spicejet') || n === 'sg') return 'SpiceJet';
+      if (n.includes('vistara') || n === 'uk') return 'Vistara';
+      if (n.includes('akasa')) return 'Akasa Air';
+      if (n.includes('star air')) return 'Star Air';
+      if (n.includes('emirates')) return 'Emirates';
+      if (n.includes('qatar')) return 'Qatar Airways';
+      if (n.includes('etihad')) return 'Etihad Airways';
+      if (n.includes('singapore')) return 'Singapore Airlines';
+      return trimmed.replace(/\b[a-z]/g, (char) => char.toUpperCase());
+    };
+
     // Sub-Task 1: Nexus DMC
     const fetchNexus = async (): Promise<any[]> => {
       if (isAirIqOnlyMode() || !nexusSupplier || !nexusSupplier.isActive) return [];
@@ -512,7 +530,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
               }
               const sArrTime = s.arrivalTime && !s.arrivalTime.includes('T') ? `${sArrDateStr}T${s.arrivalTime}:00` : (s.arrivalTime || formattedArrivalTime);
               return {
-                airline: s.airline || sf.airline,
+                airline: formatAirlineName(s.airline || sf.airline),
                 flightNo: s.flightNo || sf.flightNo,
                 origin: s.origin,
                 destination: s.destination,
@@ -525,7 +543,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
 
             return {
               _id: `SF_${sf._id}`,
-              airline: sf.airline,
+              airline: formatAirlineName(sf.airline),
               airlineLogo: `https://pics.avs.io/200/200/${getAirlineCode(sf.airline)}.png`,
               flightNumber: sf.flightNo || 'SF-1107',
               departureCity: sf.origin,

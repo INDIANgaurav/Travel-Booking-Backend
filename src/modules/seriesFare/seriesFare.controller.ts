@@ -4,11 +4,30 @@ import SeatHold from './seatHold.model';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { clearFlightSearchCache } from '../searches/search.controller';
 
+const formatAirlineName = (name?: string): string => {
+  if (!name) return '';
+  const trimmed = name.trim();
+  const n = trimmed.toLowerCase();
+  if (n.includes('air india express')) return 'Air India Express';
+  if (n.includes('air india') || n === 'ai' || n === 'airindia') return 'Air India';
+  if (n.includes('indigo') || n === '6e') return 'IndiGo';
+  if (n.includes('spicejet') || n === 'sg') return 'SpiceJet';
+  if (n.includes('vistara') || n === 'uk') return 'Vistara';
+  if (n.includes('akasa')) return 'Akasa Air';
+  if (n.includes('star air')) return 'Star Air';
+  if (n.includes('emirates')) return 'Emirates';
+  if (n.includes('qatar')) return 'Qatar Airways';
+  if (n.includes('etihad')) return 'Etihad Airways';
+  if (n.includes('singapore')) return 'Singapore Airlines';
+  return trimmed.replace(/\b[a-z]/g, (char) => char.toUpperCase());
+};
+
 export const createSeriesFare = async (req: AuthRequest, res: Response) => {
   try {
     const {
-      airline,
-      airlinePnr,
+      airline: formatAirlineName(airline),
+      airlinePnr: (airlinePnr || '').toUpperCase(),
+      flightNo: (flightNo || '').toUpperCase(),
       bookingType,
       origin,
       destination,
@@ -86,8 +105,9 @@ export const createSeriesFare = async (req: AuthRequest, res: Response) => {
       supplierId: req.user?._id,
       supplierName: req.user?.companyName || req.user?.name || 'PJ HOLIDAY BOOKERS',
       sfId,
-      airline,
-      airlinePnr,
+      airline: formatAirlineName(airline),
+      airlinePnr: (airlinePnr || '').toUpperCase(),
+      flightNo: (flightNo || '').toUpperCase(),
       bookingType: bookingType || 'ONE_WAY',
       origin: (origin || '').toUpperCase(),
       destination: (destination || '').toUpperCase(),
