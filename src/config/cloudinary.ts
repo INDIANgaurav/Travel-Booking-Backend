@@ -27,6 +27,7 @@ const avatarStorage = new CloudinaryStorage({
   } as any
 });
 
-export const upload = multer({ storage: storage });
-export const avatarUpload = multer({ storage: avatarStorage });
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB file upload limit
+export const upload = multer({ storage: storage, limits: { fileSize: MAX_UPLOAD_BYTES } });
+export const avatarUpload = multer({ storage: avatarStorage, limits: { fileSize: MAX_UPLOAD_BYTES } });
 export { cloudinary };

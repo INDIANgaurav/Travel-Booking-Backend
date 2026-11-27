@@ -16,6 +16,7 @@ import {
   deleteProfilePicture
 } from './user.controller';
 import { protect } from '../../middleware/auth.middleware';
+import { authorizeRoles } from '../../middleware/rbac.middleware';
 import { avatarUpload } from '../../config/cloudinary';
 
 const router = express.Router();
@@ -41,12 +42,13 @@ router.post('/travellers', addSavedTraveller);
 // Agent Routes
 router.put('/agent/onboarding', submitAgentOnboarding);
 
-// Supplier Staff Routes
+// Supplier Staff Routes (Strictly restricted to Supplier Owners & Super Admins)
+const supplierStaffAuth = authorizeRoles('SUPPLIER_AGENT', 'SUPER_ADMIN');
 router.route('/supplier-staff')
-  .get(getSupplierStaff)
-  .post(addSupplierStaff);
+  .get(supplierStaffAuth, getSupplierStaff)
+  .post(supplierStaffAuth, addSupplierStaff);
 router.route('/supplier-staff/:id')
-  .put(updateSupplierStaff)
-  .delete(deleteSupplierStaff);
+  .put(supplierStaffAuth, updateSupplierStaff)
+  .delete(supplierStaffAuth, deleteSupplierStaff);
 
 export default router;

@@ -324,40 +324,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
       return { markup: Math.round(adminMarkup), commission: Math.round(adminCommission) };
     };
 
-    const getAirlineCode = (name: string) => {
-      const n = (name || '').toLowerCase();
-      if (n.includes('akasa')) return 'QP';
-      if (n.includes('indigo')) return '6E';
-      if (n.includes('spicejet')) return 'SG';
-      if (n.includes('air india express')) return 'IX';
-      if (n.includes('air india')) return 'AI';
-      if (n.includes('vistara')) return 'UK';
-      if (n.includes('lufthansa')) return 'LH';
-      if (n.includes('emirates')) return 'EK';
-      if (n.includes('qatar')) return 'QR';
-      if (n.includes('etihad')) return 'EY';
-      if (n.includes('singapore')) return 'SQ';
-      if (n.includes('british')) return 'BA';
-      return 'AI';
-    };
-
-    const formatAirlineName = (name: string): string => {
-      if (!name) return '';
-      const trimmed = name.trim();
-      const n = trimmed.toLowerCase();
-      if (n.includes('air india express')) return 'Air India Express';
-      if (n.includes('air india') || n === 'ai' || n === 'airindia') return 'Air India';
-      if (n.includes('indigo') || n === '6e') return 'IndiGo';
-      if (n.includes('spicejet') || n === 'sg') return 'SpiceJet';
-      if (n.includes('vistara') || n === 'uk') return 'Vistara';
-      if (n.includes('akasa')) return 'Akasa Air';
-      if (n.includes('star air')) return 'Star Air';
-      if (n.includes('emirates')) return 'Emirates';
-      if (n.includes('qatar')) return 'Qatar Airways';
-      if (n.includes('etihad')) return 'Etihad Airways';
-      if (n.includes('singapore')) return 'Singapore Airlines';
-      return trimmed.replace(/\b[a-z]/g, (char) => char.toUpperCase());
-    };
+    const { getAirlineCode, formatAirlineName } = require('../../utils/airline.utils');
 
     // Sub-Task 1: Nexus DMC
     const fetchNexus = async (): Promise<any[]> => {
@@ -388,7 +355,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
           return {
             _id: offer.key,
             airline: leg.airline,
-            airlineLogo: `https://pics.avs.io/200/200/${leg.airline}.png`,
+            airlineLogo: `https://pics.avs.io/400/160/${leg.airline}.png`,
             flightNumber: `${leg.airline}-${leg.flight_number}`,
             departureCity: leg.origin,
             departureAirportCode: leg.origin,
@@ -544,7 +511,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
             return {
               _id: `SF_${sf._id}`,
               airline: formatAirlineName(sf.airline),
-              airlineLogo: `https://pics.avs.io/200/200/${getAirlineCode(sf.airline)}.png`,
+              airlineLogo: `https://pics.avs.io/400/160/${getAirlineCode(sf.airline)}.png`,
               flightNumber: sf.flightNo || 'SF-1107',
               departureCity: sf.origin,
               departureAirportCode: sf.origin,
@@ -702,7 +669,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
               _id: `GAPI_RET_${onward.resultSessionId}`,
               airline: retAirlineFullName,
               airlineCode: retAirlineCode,
-              airlineLogo: `https://pics.avs.io/200/200/${retAirlineCode}.png`,
+              airlineLogo: `https://pics.avs.io/400/160/${retAirlineCode}.png`,
               flightNumber: retFlightNumberStr,
               flightNo: retFlightNumberStr,
               segments: returnSegments,
@@ -740,7 +707,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
             _id: `GAPI_${onward.resultSessionId}`,
             airline: airlineFullName,
             airlineCode: airlineCode,
-            airlineLogo: `https://pics.avs.io/200/200/${airlineCode}.png`,
+            airlineLogo: `https://pics.avs.io/400/160/${airlineCode}.png`,
             flightNumber: flightNumberStr,
             flightNo: flightNumberStr,
             segments: outboundSegments,
@@ -852,7 +819,7 @@ export const getFlightsData = async (queryParams: any, isAgent: boolean = false,
               _id: `AIRIQ_${flight.ticket_id}`,
               airline: flight.airline || 'AirIQ Partner',
               airlineCode,
-              airlineLogo: `https://pics.avs.io/200/200/${airlineCode}.png`,
+              airlineLogo: `https://pics.avs.io/400/160/${airlineCode}.png`,
               flightNumber: flight.flight_number || `${airlineCode}-AIQ`,
               departureCity: flight.origin || originIata,
               departureAirportCode: flight.origin || originIata,
@@ -1444,8 +1411,9 @@ export const getCalendarPrices = async (req: AuthRequest, res: Response) => {
 export const searchHotels = async (req: AuthRequest, res: Response) => {
   try {
     const { location } = req.query;
+    const { escapeRegex } = require('../../utils/regex.utils');
     let query: any = {};
-    if (location) query.location = new RegExp(location as string, 'i');
+    if (location) query.location = new RegExp(escapeRegex(location as string), 'i');
     
     const { Hotel } = require('../inventory/inventory.model');
     const hotels = await Hotel.find(query).lean();
@@ -1461,9 +1429,10 @@ export const searchHotels = async (req: AuthRequest, res: Response) => {
 export const searchBuses = async (req: AuthRequest, res: Response) => {
   try {
     const { from, to } = req.query;
+    const { escapeRegex } = require('../../utils/regex.utils');
     let query: any = {};
-    if (from) query.from = new RegExp(from as string, 'i');
-    if (to) query.to = new RegExp(to as string, 'i');
+    if (from) query.from = new RegExp(escapeRegex(from as string), 'i');
+    if (to) query.to = new RegExp(escapeRegex(to as string), 'i');
     
     const { Bus } = require('../inventory/inventory.model');
     const buses = await Bus.find(query).lean();
@@ -1473,11 +1442,20 @@ export const searchBuses = async (req: AuthRequest, res: Response) => {
   }
 };
 
+const flightCitiesCache = new Map<string, { data: any[]; timestamp: number }>();
+const FLIGHT_CITIES_TTL_MS = 5 * 60 * 1000;
+
 // @desc    Get all available flight cities
 // @route   GET /api/searches/cities
 // @access  Public
 export const getFlightCities = async (req: Request, res: Response) => {
   try {
+    const modeKey = isAirIqOnlyMode() ? 'AIRIQ' : 'ALL';
+    const cached = flightCitiesCache.get(modeKey);
+    if (cached && Date.now() - cached.timestamp < FLIGHT_CITIES_TTL_MS) {
+      return res.json(cached.data);
+    }
+
     // This is ONLY a lookup dictionary for resolving IATA codes to readable names.
     // It does NOT decide which cities to show — only DB + API data decides that.
     const IATA_LOOKUP: Record<string, { name: string; airport: string; country: string }> = {
@@ -1561,42 +1539,40 @@ export const getFlightCities = async (req: Request, res: Response) => {
         ['DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'GOI', 'IXG', 'ATQ', 'SXR', 'IXB'].forEach(c => availableCodes.add(c));
       }
     } else {
-    // From Flights DB collection
-    const flightDep = await Flight.distinct('departureAirportCode');
-    const flightArr = await Flight.distinct('arrivalAirportCode');
-    (flightDep as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
-    (flightArr as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
-
-    // From SeriesFare DB collection
-    const sfOrigins = await SeriesFare.distinct('origin');
-    const sfDestinations = await SeriesFare.distinct('destination');
-    (sfOrigins as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
-    (sfDestinations as string[]).forEach(c => { if (c) availableCodes.add(c.toUpperCase()); });
-
-    // From Nexus DMC API sectors
-    try {
       const { getAvailableSectors } = require('../flights/nexusdmc.service');
-      const sectorsResult = await getAvailableSectors();
-      if (sectorsResult?.success && sectorsResult?._data?.sectors) {
-        for (const sector of sectorsResult._data.sectors) {
+      const [flightDep, flightArr, sfOrigins, sfDestinations, nexusRes, airIqRes] = await Promise.allSettled([
+        Flight.distinct('departureAirportCode'),
+        Flight.distinct('arrivalAirportCode'),
+        SeriesFare.distinct('origin'),
+        SeriesFare.distinct('destination'),
+        getAvailableSectors(),
+        getAvailableSectorsAirIq(),
+      ]);
+
+      if (flightDep.status === 'fulfilled' && Array.isArray(flightDep.value)) {
+        flightDep.value.forEach((c: string) => { if (c) availableCodes.add(c.toUpperCase()); });
+      }
+      if (flightArr.status === 'fulfilled' && Array.isArray(flightArr.value)) {
+        flightArr.value.forEach((c: string) => { if (c) availableCodes.add(c.toUpperCase()); });
+      }
+      if (sfOrigins.status === 'fulfilled' && Array.isArray(sfOrigins.value)) {
+        sfOrigins.value.forEach((c: string) => { if (c) availableCodes.add(c.toUpperCase()); });
+      }
+      if (sfDestinations.status === 'fulfilled' && Array.isArray(sfDestinations.value)) {
+        sfDestinations.value.forEach((c: string) => { if (c) availableCodes.add(c.toUpperCase()); });
+      }
+      if (nexusRes.status === 'fulfilled' && nexusRes.value?.success && nexusRes.value?._data?.sectors) {
+        for (const sector of nexusRes.value._data.sectors) {
           if (sector.origin) availableCodes.add(sector.origin.toUpperCase());
           if (sector.destination) availableCodes.add(sector.destination.toUpperCase());
         }
       }
-    } catch (nexusErr) {
-      // Nexus API might be down, continue with DB results
-    }
-
-    // From AirIQ API sectors
-    try {
-      const airIqSectors = await getAvailableSectorsAirIq();
-      if (Array.isArray(airIqSectors)) {
-        for (const s of airIqSectors) {
+      if (airIqRes.status === 'fulfilled' && Array.isArray(airIqRes.value)) {
+        for (const s of airIqRes.value) {
           if (s.Origin) availableCodes.add(s.Origin.toUpperCase());
           if (s.Destination) availableCodes.add(s.Destination.toUpperCase());
         }
       }
-    } catch (airIqErr) {}
     }
 
     // Step 2: Build the final list using ONLY available codes, resolving names from lookup
@@ -1618,6 +1594,7 @@ export const getFlightCities = async (req: Request, res: Response) => {
       return a.name.localeCompare(b.name);
     });
 
+    flightCitiesCache.set(modeKey, { data: cities, timestamp: Date.now() });
     res.json(cities);
   } catch (error: any) {
     console.error('Error fetching flight cities:', error);

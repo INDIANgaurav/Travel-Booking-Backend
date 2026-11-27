@@ -98,11 +98,19 @@ app.use(express.json({
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
 
-// Request Correlation ID Middleware for distributed tracing & log auditing
+// Request Correlation ID & Slow-API Timing Logger Middleware
 app.use((req, res, next) => {
   const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
   (req as any).id = requestId;
   res.setHeader('x-request-id', requestId);
+
+  const startNs = process.hrtime.bigint();
+  res.on('finish', () => {
+    const durationMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+    if (durationMs >= 500) {
+      console.warn(`[SLOW API] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Math.round(durationMs)}ms)`);
+    }
+  });
   next();
 });
 

@@ -3,24 +3,8 @@ import SeriesFare from './seriesFare.model';
 import SeatHold from './seatHold.model';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { clearFlightSearchCache } from '../searches/search.controller';
-
-const formatAirlineName = (name?: string): string => {
-  if (!name) return '';
-  const trimmed = name.trim();
-  const n = trimmed.toLowerCase();
-  if (n.includes('air india express')) return 'Air India Express';
-  if (n.includes('air india') || n === 'ai' || n === 'airindia') return 'Air India';
-  if (n.includes('indigo') || n === '6e') return 'IndiGo';
-  if (n.includes('spicejet') || n === 'sg') return 'SpiceJet';
-  if (n.includes('vistara') || n === 'uk') return 'Vistara';
-  if (n.includes('akasa')) return 'Akasa Air';
-  if (n.includes('star air')) return 'Star Air';
-  if (n.includes('emirates')) return 'Emirates';
-  if (n.includes('qatar')) return 'Qatar Airways';
-  if (n.includes('etihad')) return 'Etihad Airways';
-  if (n.includes('singapore')) return 'Singapore Airlines';
-  return trimmed.replace(/\b[a-z]/g, (char) => char.toUpperCase());
-};
+import { formatAirlineName } from '../../utils/airline.utils';
+import { escapeRegex } from '../../utils/regex.utils';
 
 export const createSeriesFare = async (req: AuthRequest, res: Response) => {
   try {
@@ -165,8 +149,8 @@ export const getSeriesFares = async (req: AuthRequest, res: Response) => {
 
     if (origin) filter.origin = (origin as string).toUpperCase();
     if (destination) filter.destination = (destination as string).toUpperCase();
-    if (airline) filter.airline = new RegExp(airline as string, 'i');
-    if (supplierName && supplierName !== 'All') filter.supplierName = new RegExp(supplierName as string, 'i');
+    if (airline) filter.airline = new RegExp(escapeRegex(airline as string), 'i');
+    if (supplierName && supplierName !== 'All') filter.supplierName = new RegExp(escapeRegex(supplierName as string), 'i');
     if (bookingType && bookingType !== 'All') filter.bookingType = bookingType;
 
     // Date Range Support (startDate / fromDate to endDate / toDate) or Single Date

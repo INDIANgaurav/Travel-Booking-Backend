@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import Hotel from './hotel.model';
 import { AuthRequest } from '../../middleware/auth.middleware';
+import { escapeRegex } from '../../utils/regex.utils';
 
 // 1. Register a new Hotel (Partner/User)
 export const registerHotel = async (req: AuthRequest, res: Response) => {
@@ -43,7 +44,7 @@ export const searchHotels = async (req: Request, res: Response) => {
 
     // Exact match using the new compound index (requires frontend to send exact case, or store normalized)
     // For MVP, we will use a case-insensitive regex but anchored to the start, which CAN use an index.
-    const regexPattern = new RegExp('^' + searchCity, 'i');
+    const regexPattern = new RegExp('^' + escapeRegex(searchCity), 'i');
     const localHotels = await Hotel.find({
       status: 'APPROVED',
       $or: [
